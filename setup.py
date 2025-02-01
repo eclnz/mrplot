@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import setup, find_packages #type: ignore
 
 setup(
     name="mrplot",
@@ -23,6 +23,7 @@ setup(
         "numpy>=1.21",
         "matplotlib>=3.5",
         "imageio>=2.19",
+        "imageio-ffmpeg>=0.4.7",
         "pytest>=7.0"  # For testing
     ],
     entry_points={
