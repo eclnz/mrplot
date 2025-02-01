@@ -1,0 +1,4 @@
+pytest>=7.0.0
+numpy>=1.21.0
+nibabel>=4.0.0
+imageio>=2.15.0 
