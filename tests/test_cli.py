@@ -1,12 +1,14 @@
 import pytest
 import subprocess
 from pathlib import Path
+from mrplot.plotUtils import MRIDataProcessor, MRIPlotter
+from mrplot.plotConfig import PlotConfig
 
 def test_cli_basic_3d(sample_3d_nifti, tmp_path):
     """Test basic 3D processing with default settings"""
     output_dir = tmp_path / "output"
     cmd = [
-        "python", "-m", "mri_plot.cli",
+        "python", "-m", "mrplot.cli",
         sample_3d_nifti,
         str(output_dir)
     ]
@@ -26,7 +28,7 @@ def test_cli_4d_video(sample_4d_nifti, tmp_path):
     """Test 4D video generation with custom FPS"""
     output_dir = tmp_path / "output"
     cmd = [
-        "python", "-m", "mri_plot.cli",
+        "python", "-m", "mrplot.cli",
         sample_4d_nifti,
         str(output_dir),
         "--fps", "5"
@@ -46,7 +48,7 @@ def test_cli_with_mask_and_underlay(sample_3d_nifti, sample_mask, sample_underla
     """Test mask and underlay integration"""
     output_dir = tmp_path / "output"
     cmd = [
-        "python", "-m", "mri_plot.cli",
+        "python", "-m", "mrplot.cli",
         sample_3d_nifti,
         str(output_dir),
         "--mask", sample_mask,
@@ -69,7 +71,7 @@ def test_cli_invalid_input(tmp_path):
     """Test error handling for invalid input file"""
     output_dir = tmp_path / "output"
     cmd = [
-        "python", "-m", "mri_plot.cli",
+        "python", "-m", "mrplot.cli",
         "nonexistent.nii.gz",
         str(output_dir)
     ]
@@ -83,7 +85,7 @@ def test_cli_output_dir_creation(sample_3d_nifti, tmp_path):
     """Test automatic creation of output directory"""
     output_dir = tmp_path / "new_directory"
     cmd = [
-        "python", "-m", "mri_plot.cli",
+        "python", "-m", "mrplot.cli",
         sample_3d_nifti,
         str(output_dir)
     ]

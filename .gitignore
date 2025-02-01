@@ -277,3 +277,10 @@ $RECYCLE.BIN/
 # Add to .gitignore
 tests/outputs/
 
+# Python packaging
+*.egg-info
+*.egg
+build/
+dist/
+__pycache__/
+

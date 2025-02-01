@@ -7,8 +7,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
-from processingUtils import crop_to_nonzero
-from plotConfig import PlotConfig
+from mrplot.processingUtils import crop_to_nonzero
+from mrplot.plotConfig import PlotConfig
 
 @dataclass
 class MRISlices:

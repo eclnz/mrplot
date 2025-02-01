@@ -3,8 +3,10 @@ Command-line interface for generating MRI slice plots and videos.
 """
 import argparse
 import os
-from plotUtils import MRIDataProcessor, MRIPlotter
-from plotConfig import PlotConfig
+from .plotUtils import MRIDataProcessor, MRIPlotter
+from .plotConfig import PlotConfig
+import importlib.resources as pkg_resources
+from . import templates  # Create a templates/ directory in your package
 
 def main():
     # Set up argument parser
@@ -70,7 +72,11 @@ def main():
         scan_name=base_name,
         underlay_image=processor.underlay_slices
     )
-    plotter.plot()
+    
+    # When loading internal resources
+    with pkg_resources.path(templates, "default_template.html") as template_path:
+        # Use template_path
+        plotter.plot()
 
 if __name__ == '__main__':
     main() 

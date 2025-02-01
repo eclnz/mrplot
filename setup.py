@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="mri_plot",
+    name="mrplot",
     version="0.1.0",
     author="Your Name",
     author_email="your.email@example.com",
@@ -10,6 +10,14 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/yourusername/mri-plot",
     packages=find_packages(),
+    package_data={
+        "mrplot": [
+            "templates/*",
+            "templates/*.html",
+            "configs/*.json"
+        ]
+    },
+    include_package_data=True,
     install_requires=[
         "nibabel>=4.0",
         "numpy>=1.21",
@@ -19,7 +27,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "mriplot = mri_plot.cli:main"
+            "mrplot = mrplot.cli:main"
         ]
     },
     classifiers=[

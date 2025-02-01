@@ -4,9 +4,11 @@ import os
 from typing import Optional, List
 import nibabel as nib #type: ignore
 from dataclasses import dataclass
-from MRISlices import MRISlices
-from plotConfig import PlotConfig
-from indexingUtils import list_bids_subjects_sessions_scans, build_series_list
+from mrplot.MRISlices import MRISlices
+from mrplot.plotConfig import PlotConfig
+from mrplot.indexingUtils import list_bids_subjects_sessions_scans, build_series_list
+from pathlib import Path
+import importlib.resources
 plt.switch_backend("Agg")  # For non-GUI environments
 
 class MRIDataProcessor:
@@ -309,3 +311,7 @@ class GroupPlotter:
 
                     except Exception as e:
                         print(f"Error plotting {scan}: {e}")
+
+def get_default_config():
+    config_path = importlib.resources.files("mrplot") / "configs/default.json"
+    return load_config(config_path)
