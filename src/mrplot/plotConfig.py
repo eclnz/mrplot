@@ -1,9 +1,11 @@
 from typing import Optional
 from dataclasses import dataclass
 
+
 @dataclass
 class PlotConfig:
     """Configuration for individual MRI plotting."""
+
     padding: int = 10
     fps: int = 10
     crop: bool = False

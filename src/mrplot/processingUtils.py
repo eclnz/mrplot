@@ -1,9 +1,11 @@
-import numpy as np #type: ignore
-from numpy.typing import NDArray #type: ignore
+import numpy as np  # type: ignore
+from numpy.typing import NDArray  # type: ignore
 from typing import Tuple
 
 
-def reorient_from_fsl(mri_data: NDArray, reverse: bool = False, reorient_displacement: bool = False) -> np.ndarray:
+def reorient_from_fsl(
+    mri_data: NDArray, reverse: bool = False, reorient_displacement: bool = False
+) -> np.ndarray:
     """
     Reorients MRI data from FSL to standard orientation, or optionally in reverse.
     Optionally reorients the displacement direction for 5D data.
@@ -18,22 +20,32 @@ def reorient_from_fsl(mri_data: NDArray, reverse: bool = False, reorient_displac
     """
     # Validate that the input has 3, 4, or 5 dimensions
     if mri_data.ndim not in {3, 4, 5}:
-        raise ValueError(f"Input data must be 3D, 4D, or 5D. Currently has {mri_data.ndim} dimensions.")
+        raise ValueError(
+            f"Input data must be 3D, 4D, or 5D. Currently has {mri_data.ndim} dimensions."
+        )
 
     # Disallow displacement reorientation on non-5D data
     if reorient_displacement and mri_data.ndim != 5:
-        raise ValueError("Displacement reorientation is only applicable to 5D data. "
-                         f"Received {mri_data.ndim}D data with reorient_displacement=True.")
+        raise ValueError(
+            "Displacement reorientation is only applicable to 5D data. "
+            f"Received {mri_data.ndim}D data with reorient_displacement=True."
+        )
 
     # Reorient based on the 'reverse' flag
     if not reverse:
         # Standard reorientation from FSL to standard
         if mri_data.ndim == 3:
-            mri_reorient = np.transpose(np.flip(np.flip(mri_data, axis=2), axis=1), (2, 1, 0))
+            mri_reorient = np.transpose(
+                np.flip(np.flip(mri_data, axis=2), axis=1), (2, 1, 0)
+            )
         elif mri_data.ndim == 4:
-            mri_reorient = np.transpose(np.flip(np.flip(mri_data, axis=2), axis=1), (2, 1, 0, 3))
+            mri_reorient = np.transpose(
+                np.flip(np.flip(mri_data, axis=2), axis=1), (2, 1, 0, 3)
+            )
         elif mri_data.ndim == 5:
-            mri_reorient = np.transpose(np.flip(np.flip(mri_data, axis=2), axis=1), (2, 1, 0, 3, 4))
+            mri_reorient = np.transpose(
+                np.flip(np.flip(mri_data, axis=2), axis=1), (2, 1, 0, 3, 4)
+            )
             if reorient_displacement:
                 # Reorient displacement directions
                 mri_reorient = mri_reorient[:, :, :, [2, 1, 0], :]
@@ -44,11 +56,17 @@ def reorient_from_fsl(mri_data: NDArray, reverse: bool = False, reorient_displac
     else:
         # Reverse reorientation from standard orientation back to FSL
         if mri_data.ndim == 3:
-            mri_reorient = np.flip(np.flip(np.transpose(mri_data, (2, 1, 0)), axis=1), axis=2)
+            mri_reorient = np.flip(
+                np.flip(np.transpose(mri_data, (2, 1, 0)), axis=1), axis=2
+            )
         elif mri_data.ndim == 4:
-            mri_reorient = np.flip(np.flip(np.transpose(mri_data, (2, 1, 0, 3)), axis=1), axis=2)
+            mri_reorient = np.flip(
+                np.flip(np.transpose(mri_data, (2, 1, 0, 3)), axis=1), axis=2
+            )
         elif mri_data.ndim == 5:
-            mri_reorient = np.flip(np.flip(np.transpose(mri_data, (2, 1, 0, 3, 4)), axis=1), axis=2)
+            mri_reorient = np.flip(
+                np.flip(np.transpose(mri_data, (2, 1, 0, 3, 4)), axis=1), axis=2
+            )
             if reorient_displacement:
                 # Reverse displacement directions
                 mri_reorient = mri_reorient[:, :, :, [2, 1, 0], :]
@@ -59,9 +77,9 @@ def reorient_from_fsl(mri_data: NDArray, reverse: bool = False, reorient_displac
 
     return mri_reorient
 
+
 def crop_to_nonzero(
-    MRIimage: NDArray, 
-    padding: int = 0
+    MRIimage: NDArray, padding: int = 0
 ) -> Tuple[NDArray, NDArray, Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]]:
     """
     Crops the input MRI image to the smallest bounding box containing all non-zero elements, with optional padding.
@@ -73,7 +91,7 @@ def crop_to_nonzero(
     Returns:
     - cropped_MRIimage (NDArray[np.float_]): The cropped MRI image with dimensions matching the crop bounds.
     - mask (NDArray): A boolean array indicating the non-zero elements within the cropping bounds, including padding.
-    - crop_bounds (Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]): A 3x2 tuple specifying the start and end indices 
+    - crop_bounds (Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]): A 3x2 tuple specifying the start and end indices
       of the cropping bounds for [x, y, z].
 
     Raises:
@@ -92,15 +110,17 @@ def crop_to_nonzero(
 
     # Convert MRIimage to a binary array where all values > 0 are set to True
     binary_image = (MRIimage > 0).astype(np.bool_)
-    
+
     if not np.any(binary_image):
-        raise ValueError("Empty image: MRIimage contains no non-zero elements, so it cannot be cropped.")
+        raise ValueError(
+            "Empty image: MRIimage contains no non-zero elements, so it cannot be cropped."
+        )
 
     # Determine crop bounds by finding non-zero elements along each axis
     x_nonzero = np.any(binary_image, axis=(1, 2))
     y_nonzero = np.any(binary_image, axis=(0, 2))
     z_nonzero = np.any(binary_image, axis=(0, 1))
-    
+
     # Find the start and end of non-zero regions along each axis
     try:
         x_start, x_end = np.where(x_nonzero)[0][[0, -1]]
@@ -133,7 +153,9 @@ def crop_to_nonzero(
 
     # Crop MRIimage based on calculated bounds
     try:
-        cropped_MRIimage = MRIimage[x_start:x_end + 1, y_start:y_end + 1, z_start:z_end + 1]
+        cropped_MRIimage = MRIimage[
+            x_start : x_end + 1, y_start : y_end + 1, z_start : z_end + 1
+        ]
     except IndexError as e:
         raise ValueError(
             f"Cropping error: The calculated bounds are out of range for the MRI image. "
@@ -143,7 +165,7 @@ def crop_to_nonzero(
 
     # Create the mask array based on the crop bounds
     mask = np.zeros_like(MRIimage, dtype=bool)
-    mask[x_start:x_end + 1, y_start:y_end + 1, z_start:z_end + 1] = True
+    mask[x_start : x_end + 1, y_start : y_end + 1, z_start : z_end + 1] = True
 
     return cropped_MRIimage, mask, crop_bounds
 
@@ -151,14 +173,14 @@ def crop_to_nonzero(
 def apply_crop_bounds(array, crop_bounds):
     """
     Crops the input array according to specified cropping bounds.
-    
+
     Parameters:
     - array: A numpy array to be cropped. Only the first three dimensions are cropped.
     - crop_bounds: A 3x2 array specifying start and end indices for the x, y, and z dimensions.
-    
+
     Returns:
     - cropped_array: The cropped section of the input array.
-    
+
     Raises:
     - ValueError: If crop_bounds does not have the expected 3x2 shape.
     - ValueError: If any of the crop bounds are out of range for the dimensions of the input array.
@@ -174,21 +196,33 @@ def apply_crop_bounds(array, crop_bounds):
     z_start, z_end = crop_bounds[2]
 
     # Validate x-axis bounds
-    if not (0 <= x_start < array.shape[0]) or not (0 <= x_end < array.shape[0]) or x_start > x_end:
+    if (
+        not (0 <= x_start < array.shape[0])
+        or not (0 <= x_end < array.shape[0])
+        or x_start > x_end
+    ):
         raise ValueError(
             f"Invalid x-axis bounds: start ({x_start}) and end ({x_end}) must be within [0, {array.shape[0] - 1}] "
             f"and start <= end."
         )
 
     # Validate y-axis bounds
-    if not (0 <= y_start < array.shape[1]) or not (0 <= y_end < array.shape[1]) or y_start > y_end:
+    if (
+        not (0 <= y_start < array.shape[1])
+        or not (0 <= y_end < array.shape[1])
+        or y_start > y_end
+    ):
         raise ValueError(
             f"Invalid y-axis bounds: start ({y_start}) and end ({y_end}) must be within [0, {array.shape[1] - 1}] "
             f"and start <= end."
         )
 
     # Validate z-axis bounds
-    if not (0 <= z_start < array.shape[2]) or not (0 <= z_end < array.shape[2]) or z_start > z_end:
+    if (
+        not (0 <= z_start < array.shape[2])
+        or not (0 <= z_end < array.shape[2])
+        or z_start > z_end
+    ):
         raise ValueError(
             f"Invalid z-axis bounds: start ({z_start}) and end ({z_end}) must be within [0, {array.shape[2] - 1}] "
             f"and start <= end."
@@ -196,7 +230,9 @@ def apply_crop_bounds(array, crop_bounds):
 
     # Apply cropping and return the result
     try:
-        cropped_array = array[x_start:x_end + 1, y_start:y_end + 1, z_start:z_end + 1]
+        cropped_array = array[
+            x_start : x_end + 1, y_start : y_end + 1, z_start : z_end + 1
+        ]
     except IndexError as e:
         raise ValueError(
             f"Cropping error: Unable to apply crop bounds {crop_bounds} to array of shape {array.shape}. "

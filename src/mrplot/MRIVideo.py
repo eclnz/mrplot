@@ -1,6 +1,7 @@
 import os
 from typing import Dict
 
+
 class MRIMedia:
     def __init__(self, output_dir: str, scan_name: str, media_type: str):
         """
@@ -23,7 +24,7 @@ class MRIMedia:
         Returns:
             Dict[str, str]: A dictionary mapping views to their file paths.
         """
-        views = ['sagittal', 'coronal', 'axial']
+        views = ["sagittal", "coronal", "axial"]
         media_paths = {}
         for view in views:
             file_name = f"{self.scan_name}_{view}.{self.file_format}"

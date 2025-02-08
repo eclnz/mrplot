@@ -3,7 +3,10 @@ from collections import defaultdict
 from pathlib import Path
 import os
 
-def list_bids_subjects_sessions_scans(data_directory: str, file_extension: str, raw: bool = False) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
+
+def list_bids_subjects_sessions_scans(
+    data_directory: str, file_extension: str, raw: bool = False
+) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
     """
     Recursively traverses directories to list files by subject, session, and scan in a BIDS-compliant structure.
 
@@ -14,10 +17,14 @@ def list_bids_subjects_sessions_scans(data_directory: str, file_extension: str, 
     Returns:
         Dict[str, Dict[str, Dict[str, Dict[str, str]]]]: A dictionary with subjects, sessions, and scans containing metadata.
     """
-    subjects_sessions_scans: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    subjects_sessions_scans: Dict[
+        str, Dict[str, Dict[str, Dict[str, str]]]
+    ] = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
 
     if not Path(data_directory).is_dir():
-        raise ValueError(f"Data directory '{data_directory}' does not exist or is not a directory.")
+        raise ValueError(
+            f"Data directory '{data_directory}' does not exist or is not a directory."
+        )
 
     def recursive_traverse(path: Path):
         """
@@ -42,15 +49,23 @@ def list_bids_subjects_sessions_scans(data_directory: str, file_extension: str, 
                 else:
                     recursive_traverse(entry)
 
-            elif entry.is_file() and (entry.name.endswith(file_extension) or file_extension in entry.name):
+            elif entry.is_file() and (
+                entry.name.endswith(file_extension) or file_extension in entry.name
+            ):
                 # Extract metadata
                 parent_session = entry.parent.name
                 parent_subject = entry.parent.parent.name
 
                 if raw:
                     # Extract metadata with flexibility for folder structure
-                    parent_session = entry.parent.parent.name if entry.parent.parent else "unknown"
-                    parent_subject = entry.parent.parent.parent.name if entry.parent.parent and entry.parent.parent.parent else "unknown"
+                    parent_session = (
+                        entry.parent.parent.name if entry.parent.parent else "unknown"
+                    )
+                    parent_subject = (
+                        entry.parent.parent.parent.name
+                        if entry.parent.parent and entry.parent.parent.parent
+                        else "unknown"
+                    )
 
                 # Ensure the hierarchy is valid
                 if not parent_subject.startswith("sub-"):
@@ -71,15 +86,23 @@ def list_bids_subjects_sessions_scans(data_directory: str, file_extension: str, 
                     scan = entry.name
 
                 # Populate the structure
-                subjects_sessions_scans[parent_subject][parent_session][scan]["scan_path"] = os.path.join(path, entry.name)
+                subjects_sessions_scans[parent_subject][parent_session][scan][
+                    "scan_path"
+                ] = os.path.join(path, entry.name)
 
     # Start recursive traversal
     recursive_traverse(Path(data_directory))
 
     # Convert defaultdict to standard dictionary for cleaner return
-    return {k: {kk: dict(vv) for kk, vv in v.items()} for k, v in subjects_sessions_scans.items()}
+    return {
+        k: {kk: dict(vv) for kk, vv in v.items()}
+        for k, v in subjects_sessions_scans.items()
+    }
 
-def build_series_list(subjects_sessions_scans: dict[str, dict[str, dict[str, dict[str, str]]]]) -> list:
+
+def build_series_list(
+    subjects_sessions_scans: dict[str, dict[str, dict[str, dict[str, str]]]],
+) -> list:
     """
     Finds all unique scan names in the subjects_sessions_scans structure.
 

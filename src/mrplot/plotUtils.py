@@ -1,24 +1,28 @@
-import matplotlib.pyplot as plt #type: ignore
-import imageio #type: ignore
+import matplotlib.pyplot as plt  # type: ignore
+import imageio  # type: ignore
 import os
 from typing import Optional, List
-import nibabel as nib #type: ignore
+import nibabel as nib  # type: ignore
 from dataclasses import dataclass
 from mrplot.MRISlices import MRISlices
 from mrplot.plotConfig import PlotConfig
 from mrplot.indexingUtils import list_bids_subjects_sessions_scans, build_series_list
 from pathlib import Path
 import importlib.resources
+
 plt.switch_backend("Agg")  # For non-GUI environments
+
 
 class MRIDataProcessor:
     """Handles preprocessing of MRI data, underlay images, and masks."""
-    def __init__(self, 
-                 mri_data_path: str, 
-                 config: PlotConfig, 
-                 underlay_image_path: Optional[str] = None, 
-                 mask_path: Optional[str] = None):
-        
+
+    def __init__(
+        self,
+        mri_data_path: str,
+        config: PlotConfig,
+        underlay_image_path: Optional[str] = None,
+        mask_path: Optional[str] = None,
+    ):
         self.mri_data_path = mri_data_path
         self.underlay_image_path = underlay_image_path
         self.mask_path = mask_path
@@ -30,78 +34,99 @@ class MRIDataProcessor:
     def _import_scans(self):
         self.mri_data = nib.load(self.mri_data_path)
         self.mask = nib.load(self.mask_path) if self.mask_path else None
-        self.underlay_image = nib.load(self.underlay_image_path) if self.underlay_image_path else None
-        
+        self.underlay_image = (
+            nib.load(self.underlay_image_path) if self.underlay_image_path else None
+        )
+
     def _extract_slices(self):
         """Extract the middle slices of volumes"""
-        
+
         # Check if the underlay matches spatial dimensions if present.
         if self.underlay_image is not None:
             if self.underlay_image.shape[:3] != self.mri_data.shape[:3]:
-                raise ValueError("Size of underlay image does not match size of MRI data in the first three dimensions")
-                
+                raise ValueError(
+                    "Size of underlay image does not match size of MRI data in the first three dimensions"
+                )
+
         # If mask present
         if self.mask is not None:
-            
             # Check if the mask matches spatial dimensions if present.
             if self.mask.shape[:3] != self.mri_data.shape[:3]:
-                raise ValueError("Size of mask does not match size of MRI data in the first three dimensions")
-            
+                raise ValueError(
+                    "Size of mask does not match size of MRI data in the first three dimensions"
+                )
+
             # User specifies to crop the image
             if self.config.crop is True:
-                
                 # Read MRI with the mask applied
-                self.mri_slices = MRISlices.from_nibabel(self.config,self.mri_data, self.mask, apply_mask=True)
-                
+                self.mri_slices = MRISlices.from_nibabel(
+                    self.config, self.mri_data, self.mask, apply_mask=True
+                )
+
                 # If the user also supplies underlay read in
                 if self.underlay_image is not None:
                     # If the user specifies for underlay to be masked
                     if self.config.mask_underlay:
-                        self.underlay_slices = MRISlices.from_nibabel(self.config,self.underlay_image, self.mask, apply_mask=True)
+                        self.underlay_slices = MRISlices.from_nibabel(
+                            self.config, self.underlay_image, self.mask, apply_mask=True
+                        )
                     else:
-                        self.underlay_slices = MRISlices.from_nibabel(self.config,self.underlay_image, self.mask, apply_mask=False)
+                        self.underlay_slices = MRISlices.from_nibabel(
+                            self.config,
+                            self.underlay_image,
+                            self.mask,
+                            apply_mask=False,
+                        )
                 # If user does not supply underlay its set to None
                 else:
                     self.underlay_slices = None
             # If user provides mask but does not set crop to true
             else:
-                self.mri_slices = MRISlices.from_nibabel(self.config,self.mri_data,self.mask, apply_mask=False)
-                self.underlay_slices = MRISlices.from_nibabel(self.config,self.underlay_image,self.mask, apply_mask=False)
-        
+                self.mri_slices = MRISlices.from_nibabel(
+                    self.config, self.mri_data, self.mask, apply_mask=False
+                )
+                self.underlay_slices = MRISlices.from_nibabel(
+                    self.config, self.underlay_image, self.mask, apply_mask=False
+                )
+
         # If user does not provide a mask at all
         else:
             # Read mri image normally
-            self.mri_slices = MRISlices.from_nibabel(self.config,self.mri_data)
-            
+            self.mri_slices = MRISlices.from_nibabel(self.config, self.mri_data)
+
             # If user provides underlay, then read that in without masking
             if self.underlay_image is not None:
-                self.underlay_slices = MRISlices.from_nibabel(self.config,self.underlay_image)
+                self.underlay_slices = MRISlices.from_nibabel(
+                    self.config, self.underlay_image
+                )
             # If no underlay supplied its set to none.
-            else: 
+            else:
                 self.underlay_slices = None
-                
+
         # Make sure the images are rotated from RSL so they appear normal clinically
-        self.mri_slices.rotate_slices()    
+        self.mri_slices.rotate_slices()
         if self.underlay_image is not None:
-            self.underlay_slices.rotate_slices()    
-                
-    def _get_media_type(self)-> None:
+            self.underlay_slices.rotate_slices()
+
+    def _get_media_type(self) -> None:
         slice_dims = len(self.mri_slices.axial.shape)
         if slice_dims == 2:
-            self.media_type='png'
+            self.media_type = "png"
         elif slice_dims > 2:
-            self.media_type='mp4'
-            
+            self.media_type = "mp4"
+
+
 class MRIPlotter:
     """Handles plotting of MRI data, generating either images or videos based on the media type."""
+
     def __init__(
-        self, 
+        self,
         media_type: str,
-        mri_data: MRISlices, 
-        config: PlotConfig, 
+        mri_data: MRISlices,
+        config: PlotConfig,
         output_dir: str,
-        scan_name: str, 
-        underlay_image: Optional[MRISlices] = None
+        scan_name: str,
+        underlay_image: Optional[MRISlices] = None,
     ):
         """
         Args:
@@ -128,7 +153,9 @@ class MRIPlotter:
         elif self.media_type == "mp4":
             self._plot_videos()
         else:
-            raise ValueError(f"Unsupported media type: {self.media_type}. Only 'png' and 'mp4' are supported.")
+            raise ValueError(
+                f"Unsupported media type: {self.media_type}. Only 'png' and 'mp4' are supported."
+            )
 
     def _plot_images(self):
         """Generates and saves images for three orthogonal planes."""
@@ -145,7 +172,7 @@ class MRIPlotter:
         video_writers = self._initialize_video_writers()
 
         # Iterate over timepoints
-        for t in range(self.mri_data.shape[-1]): # Assumes last dimension is timepoint
+        for t in range(self.mri_data.shape[-1]):  # Assumes last dimension is timepoint
             plane_images = self.mri_data.add_titles_and_generate_images(
                 config=self.config,
                 title_prefix=self.scan_name,
@@ -153,7 +180,7 @@ class MRIPlotter:
                 slice_timepoint=t,
                 underlay_slice=self.underlay_image,
             )
-            
+
             # Write all frames by appending images to video writers
             for plane, image in plane_images.items():
                 video_writers[plane].append_data(image)
@@ -173,7 +200,10 @@ class MRIPlotter:
             for plane in ["sagittal", "coronal", "axial"]
         }
 
-def find_unique_scans_in_bids(bids_folder: str, file_extension: str = ".nii.gz") -> List[str]:
+
+def find_unique_scans_in_bids(
+    bids_folder: str, file_extension: str = ".nii.gz"
+) -> List[str]:
     """
     Scans a BIDS folder and identifies unique scans based on text after `desc-` in filenames.
 
@@ -186,24 +216,35 @@ def find_unique_scans_in_bids(bids_folder: str, file_extension: str = ".nii.gz")
     """
 
     if not os.path.isdir(bids_folder):
-        raise ValueError(f"BIDS folder '{bids_folder}' does not exist or is not a directory.")
-    
-    subject_session = list_bids_subjects_sessions_scans(bids_folder, file_extension='.nii.gz', raw=False)
-    
+        raise ValueError(
+            f"BIDS folder '{bids_folder}' does not exist or is not a directory."
+        )
+
+    subject_session = list_bids_subjects_sessions_scans(
+        bids_folder, file_extension=".nii.gz", raw=False
+    )
+
     unique_scans = build_series_list(subject_session)
-    
+
     return unique_scans
-        
+
+
 @dataclass
 class GroupPlotConfig:
     """Configuration for group plotting."""
+
     bids_dir: str
     output_dir: str
     selected_scans: list[str]
     all_scans: list[str]
 
+
 class GroupPlotter:
-    def __init__(self, config: GroupPlotConfig, subject_session_list: dict[str, dict[str, dict[str, dict[str, str]]]]):
+    def __init__(
+        self,
+        config: GroupPlotConfig,
+        subject_session_list: dict[str, dict[str, dict[str, dict[str, str]]]],
+    ):
         """
         Initializes the GroupPlotter.
 
@@ -226,8 +267,10 @@ class GroupPlotter:
         for scan in self.config.selected_scans:
             configs[scan] = PlotConfig()
         return configs
-        
-    def _find_scan_path(self, subject: str, session: str, scan_name: str|None) -> Optional[str]:
+
+    def _find_scan_path(
+        self, subject: str, session: str, scan_name: str | None
+    ) -> Optional[str]:
         """
         Finds the path to a scan (e.g., mask or underlay) within the subject-session structure.
 
@@ -285,15 +328,19 @@ class GroupPlotter:
                     try:
                         # Retrieve paths for mask and underlay
                         scan_config = self.scan_configs[scan]
-                        mask_path = self._find_scan_path(subject, session, scan_config.mask)
-                        underlay_path = self._find_scan_path(subject, session, scan_config.underlay_image)
+                        mask_path = self._find_scan_path(
+                            subject, session, scan_config.mask
+                        )
+                        underlay_path = self._find_scan_path(
+                            subject, session, scan_config.underlay_image
+                        )
 
                         # Initialize and preprocess the MRI data
                         processor = MRIDataProcessor(
                             mri_data_path=metadata["scan_path"],
                             config=scan_config,
                             underlay_image_path=underlay_path,
-                            mask_path=mask_path
+                            mask_path=mask_path,
                         )
 
                         # Initialize and run the plotter
@@ -301,16 +348,19 @@ class GroupPlotter:
                             media_type=processor.media_type,
                             mri_data=processor.mri_slices,
                             config=scan_config,
-                            output_dir=os.path.join(self.config.output_dir, subject, session),
+                            output_dir=os.path.join(
+                                self.config.output_dir, subject, session
+                            ),
                             scan_name=scan,
-                            underlay_image=processor.underlay_slices
+                            underlay_image=processor.underlay_slices,
                         )
                         plotter.plot()
-                        
+
                         print(f"successfully plotted {scan}")
 
                     except Exception as e:
                         print(f"Error plotting {scan}: {e}")
+
 
 def get_default_config():
     config_path = importlib.resources.files("mrplot") / "configs/default.json"

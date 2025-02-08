@@ -1,6 +1,6 @@
-import pytest # type: ignore
-import numpy as np # type: ignore
-import nibabel as nib # type: ignore
+import pytest  # type: ignore
+import numpy as np  # type: ignore
+import nibabel as nib  # type: ignore
 import os
 
 
@@ -13,6 +13,7 @@ def sample_3d_nifti(tmp_path):
     img.to_filename(path)
     return path
 
+
 @pytest.fixture
 def sample_4d_nifti(tmp_path):
     data = np.random.rand(50, 50, 50, 10)  # 3D + time
@@ -21,6 +22,7 @@ def sample_4d_nifti(tmp_path):
     img.to_filename(path)
     return path
 
+
 @pytest.fixture
 def sample_5d_nifti(tmp_path):
     data = np.random.rand(50, 50, 50, 3, 10)  # 3D + time + echo
@@ -28,6 +30,7 @@ def sample_5d_nifti(tmp_path):
     path = os.path.join(tmp_path, "test5d.nii.gz")
     img.to_filename(path)
     return path
+
 
 # Mask and underlay fixtures
 @pytest.fixture
@@ -38,6 +41,7 @@ def sample_mask(tmp_path):
     path = os.path.join(tmp_path, "mask.nii.gz")
     img.to_filename(path)
     return path
+
 
 @pytest.fixture
 def sample_underlay(tmp_path):
