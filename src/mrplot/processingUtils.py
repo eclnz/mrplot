@@ -1,6 +1,7 @@
-import numpy as np
-from numpy.typing import NDArray
+import numpy as np #type: ignore
+from numpy.typing import NDArray #type: ignore
 from typing import Tuple
+
 
 def reorient_from_fsl(mri_data: NDArray, reverse: bool = False, reorient_displacement: bool = False) -> np.ndarray:
     """

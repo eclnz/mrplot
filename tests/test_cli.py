@@ -1,10 +1,10 @@
-import pytest
+import pytest # type: ignore
 import subprocess
 from pathlib import Path
 from mrplot.plotUtils import MRIDataProcessor, MRIPlotter
 from mrplot.plotConfig import PlotConfig
 import os
-import imageio
+import imageio # type: ignore
 
 @pytest.mark.parametrize("data_fixture,expected_media_type", [
     ("sample_3d_nifti", "png"),

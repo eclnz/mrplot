@@ -1,14 +1,15 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from numpy.typing import NDArray
+from numpy.typing import NDArray #type: ignore
 from typing import Optional, Tuple, Dict
-import nibabel as nib
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.colors import Normalize
-from matplotlib.cm import ScalarMappable
+import nibabel as nib #type: ignore
+import numpy as np #type: ignore
+import matplotlib.pyplot as plt #type: ignore
+from matplotlib.colors import Normalize #type: ignore
+from matplotlib.cm import ScalarMappable #type: ignore
 from mrplot.processingUtils import crop_to_nonzero
 from mrplot.plotConfig import PlotConfig
+
 
 @dataclass
 class MRISlices:

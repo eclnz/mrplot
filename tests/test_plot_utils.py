@@ -1,9 +1,10 @@
-import pytest
-import numpy as np
-import nibabel as nib
+import pytest # type: ignore
+import numpy as np # type: ignore
+import nibabel as nib # type: ignore
 import os
 from mrplot.plotUtils import MRIDataProcessor, MRIPlotter
 from mrplot.plotConfig import PlotConfig
+
 
 # Parameterized test function
 @pytest.mark.parametrize("data_fixture,expected_media_type", [

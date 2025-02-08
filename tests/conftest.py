@@ -1,7 +1,8 @@
-import pytest
-import numpy as np
-import nibabel as nib
+import pytest # type: ignore
+import numpy as np # type: ignore
+import nibabel as nib # type: ignore
 import os
+
 
 # Fixtures for different dimensionalities
 @pytest.fixture
