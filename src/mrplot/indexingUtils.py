@@ -2,10 +2,13 @@ from typing import Dict
 from collections import defaultdict
 from pathlib import Path
 import os
+import logging
+
+BIDS_RAW_OPTIONS = ["anat", "func", "fmap", "dwi", "perf"]
 
 
 def list_bids_subjects_sessions_scans(
-    data_directory: str, file_extension: str, raw: bool = False
+    data_directory: str, file_extension: str
 ) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
     """
     Recursively traverses directories to list files by subject, session, and scan in a BIDS-compliant structure.
@@ -53,19 +56,12 @@ def list_bids_subjects_sessions_scans(
                 entry.name.endswith(file_extension) or file_extension in entry.name
             ):
                 # Extract metadata
-                parent_session = entry.parent.name
-                parent_subject = entry.parent.parent.name
-
-                if raw:
-                    # Extract metadata with flexibility for folder structure
-                    parent_session = (
-                        entry.parent.parent.name if entry.parent.parent else "unknown"
-                    )
-                    parent_subject = (
-                        entry.parent.parent.parent.name
-                        if entry.parent.parent and entry.parent.parent.parent
-                        else "unknown"
-                    )
+                if entry.parent.name in BIDS_RAW_OPTIONS:
+                    parent_session = entry.parent.parent.name
+                    parent_subject = entry.parent.parent.parent.name
+                else:
+                    parent_session = entry.parent.name
+                    parent_subject = entry.parent.parent.name
 
                 # Ensure the hierarchy is valid
                 if not parent_subject.startswith("sub-"):
@@ -76,6 +72,9 @@ def list_bids_subjects_sessions_scans(
 
                 # Skip files that cannot be matched to a valid subject/session structure
                 if parent_subject == "unknown" or parent_session == "unknown":
+                    logging.warning(
+                        f"Skipping file {entry.name} due to invalid subject/session structure"
+                    )
                     continue
 
                 # Extract scan description

@@ -221,7 +221,7 @@ def find_unique_scans_in_bids(
         )
 
     subject_session = list_bids_subjects_sessions_scans(
-        bids_folder, file_extension=".nii.gz", raw=False
+        bids_folder, file_extension=".nii.gz"
     )
 
     unique_scans = build_series_list(subject_session)
