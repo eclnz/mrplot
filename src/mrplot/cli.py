@@ -6,6 +6,7 @@ import argparse
 import os
 from .plotUtils import MRIDataProcessor, MRIPlotter
 from .plotConfig import PlotConfig
+from .indexingUtils import build_series_list
 import importlib.resources as pkg_resources
 import click
 from .groupPlotter import GroupPlotter, GroupPlotConfig
@@ -92,114 +93,81 @@ def main(input, output_dir, padding, fps, crop, mask, underlay, mask_underlay):
 
 
 @cli.command()
-@click.argument("bids-dir", type=click.Path(exists=True))
-@click.option("-o", "--output-dir", required=True, help="Output directory")
-@click.option("-s", "--scans", multiple=True, help="Scans to process (e.g. T1w bold)")
-@click.option(
-    "--config-file",
-    type=click.Path(exists=True),
-    help="JSON config file with plot settings",
-)
-@click.option("--interactive", is_flag=True, help="Configure settings interactively")
-@click.option(
-    "--save-config", type=click.Path(), help="Save configuration to file for reuse"
-)
-def group(bids_dir, output_dir, scans, config_file, interactive, save_config):
-    """Process group of scans from BIDS directory"""
-    # Load or initialize configuration
-    if config_file:
-        with open(config_file) as f:
-            config_data = json.load(f)
-        config = GroupPlotConfig(**config_data)
-    else:
+@click.argument("bids-dir", type=click.Path(exists=True, file_okay=False))
+@click.argument("output-dir", type=click.Path())
+@click.option("--interactive", is_flag=True, default=False, help="Configure settings interactively")
+def group(bids_dir, output_dir, interactive):
+    """Process BIDS directory with specified scans"""
+    try:
         config = GroupPlotConfig(
             bids_dir=bids_dir,
-            output_dir=output_dir,
-            selected_scans=list(scans),
-            all_scans=[],  # Will be populated automatically
+            output_dir=output_dir
         )
-
-    # Initialize plotter
-    plotter = GroupPlotter(config, None)  # Auto-discover subjects
-
-    if interactive:
-        configure_interactively(plotter)
-
-    # Validate before running
-    validate_configuration(plotter.config)
-
-    # Save config if requested
-    if save_config:
-        save_configuration(plotter.config, save_config)
-
-    # Run the plotter
-    plotter.plot()
-
+        
+        try:
+            plotter = GroupPlotter(config)
+            # Set all scans as selected by default
+            if not interactive:
+                plotter.selected_scans = plotter.all_scans
+                # Initialize default configs for all scans
+                for scan in plotter.selected_scans:
+                    plotter.scan_configs[scan] = PlotConfig()
+        except ValueError as e:
+            click.echo(f"Error: {str(e)}", err=True)
+            raise click.Abort()
+            
+        if interactive:
+            configure_interactively(plotter)
+            
+        plotter.plot()
+        
+    except Exception as e:
+        click.echo(f"Error: {str(e)}", err=True)
+        raise click.Abort()
 
 def configure_interactively(plotter):
     """Interactive configuration wizard"""
     click.echo("\n=== Interactive Configuration ===")
-
-    # Scan selection
+    
+    # Show available scans
     click.echo("\nAvailable scans:")
-    for idx, scan in enumerate(plotter.config.all_scans, 1):
+    for idx, scan in enumerate(plotter.all_scans, 1):
         click.echo(f"{idx}: {scan}")
-
+    
+    # Get scan selection
     selected = click.prompt(
         "\nSelect scans to process (comma-separated numbers)",
-        type=click.IntRange(1, len(plotter.config.all_scans)),
-        multiple=True,
+        type=click.STRING
     )
-    plotter.config.selected_scans = [plotter.config.all_scans[i - 1] for i in selected]
-
+    
+    try:
+        selected_indices = [int(i.strip()) for i in selected.split(",")]
+        plotter.selected_scans = [plotter.all_scans[i-1] for i in selected_indices]
+    except (ValueError, IndexError):
+        click.echo("Invalid selection. Please enter comma-separated numbers.")
+        raise click.Abort()
+    
     # Configure each selected scan
-    for scan in plotter.config.selected_scans:
+    for scan in plotter.selected_scans:
         click.echo(f"\nConfiguring {scan}:")
-        plotter.scan_configs[scan] = configure_scan_interactively()
-
-
-def configure_scan_interactively():
-    """Configure settings for a single scan"""
-    cfg = PlotConfig()
-
-    cfg.padding = click.prompt(
-        "Padding around images (mm)", type=int, default=cfg.padding
-    )
-
-    cfg.fps = click.prompt(
-        "Animation frame rate (for 4D data)", type=int, default=cfg.fps
-    )
-
-    cfg.crop = click.confirm("Automatically crop empty space?", default=cfg.crop)
-
-    # Add more parameters as needed...
-
-    return cfg
-
-
-def validate_configuration(config):
-    """Validate configuration before execution"""
-    if not config.selected_scans:
-        raise click.BadParameter("No scans selected for processing")
-
-    if not Path(config.bids_dir).exists():
-        raise click.BadParameter(f"BIDS directory not found: {config.bids_dir}")
-
-    # Add more validation as needed...
-
-
-def save_configuration(config, path):
-    """Save configuration to JSON file"""
-    config_dict = {
-        "bids_dir": config.bids_dir,
-        "output_dir": config.output_dir,
-        "selected_scans": config.selected_scans,
-        "scan_configs": {scan: vars(cfg) for scan, cfg in config.scan_configs.items()},
-    }
-
-    with open(path, "w") as f:
-        json.dump(config_dict, f, indent=2)
+        config = PlotConfig()
+        
+        # Get mask
+        if click.confirm("Add a mask?", default=False):
+            config.mask = click.prompt("Mask scan name", type=str)
+            
+        # Get underlay
+        if click.confirm("Add an underlay?", default=False):
+            config.underlay_image = click.prompt("Underlay scan name", type=str)
+            
+        # Other options
+        config.crop = click.confirm("Crop empty space?", default=False)
+        config.padding = click.prompt("Padding (pixels)", type=int, default=10)
+        config.fps = click.prompt("FPS (for 4D data)", type=int, default=10)
+        
+        plotter.scan_configs[scan] = config
 
 
 if __name__ == "__main__":
     cli()
+ 

@@ -5,6 +5,9 @@ from mrplot.plotUtils import MRIDataProcessor, MRIPlotter
 from mrplot.plotConfig import PlotConfig
 import os
 import imageio  # type: ignore
+from click.testing import CliRunner
+from mrplot.cli import cli
+import json
 
 
 @pytest.mark.parametrize(
@@ -100,6 +103,57 @@ def test_cli_fps_option(sample_4d_nifti, tmp_path):
     reader = imageio.get_reader(video_path)
     meta = reader.get_meta_data()
     assert meta["fps"] == 10
+
+
+def test_group_command_auto_discovery(sample_bids_structure, tmp_path):
+    """Test simplified group command"""
+    runner = CliRunner()
+    
+    result = runner.invoke(
+        cli,
+        [
+            "group",
+            str(sample_bids_structure),
+            str(tmp_path / "output"),
+            "--scans", "T1w",
+            "--scans", "bold"
+        ]
+    )
+    
+    assert result.exit_code == 0
+
+
+def test_group_command_with_config_file(sample_bids_structure, tmp_path):
+    """Test basic group command"""
+    runner = CliRunner()
+    
+    result = runner.invoke(
+        cli,
+        [
+            "group",
+            str(sample_bids_structure),
+            str(tmp_path / "output"),
+            "--scans", "T1w"
+        ]
+    )
+    
+    assert result.exit_code == 0
+
+
+def test_group_command_error_handling(empty_bids_dir, tmp_path):
+    """Test group command error scenarios"""
+    runner = CliRunner()
+    
+    result = runner.invoke(
+        cli,
+        [
+            "group",
+            str(empty_bids_dir),
+            str(tmp_path / "output"),
+            "--scans", "T1w"
+        ]
+    )
+    assert "No valid BIDS structure" in result.output
 
 
 if __name__ == "__main__":

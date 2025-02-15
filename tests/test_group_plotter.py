@@ -49,7 +49,6 @@ def mock_config(tmp_path, mock_bids_dir):
     return GroupPlotConfig(
         bids_dir=str(mock_bids_dir),
         selected_scans=['T1w', 'aMRI', 'motion'],
-        all_scans=['T1w', 'aMRI', 'motion'],
         output_dir=str(tmp_path / "output")
     )
 
@@ -153,7 +152,6 @@ def test_plot_with_real_data(tmp_path_factory):
     config = GroupPlotConfig(
         bids_dir=str(bids_dir),
         selected_scans=['T1w', 'bold', 'motion'],
-        all_scans=['T1w', 'bold', 'motion'],
         output_dir=str(output_dir)
     )
     

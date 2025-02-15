@@ -108,10 +108,16 @@ def list_bids_subjects_sessions_scans(
     recursive_traverse(data_path)
 
     # Convert defaultdict to standard dictionary for cleaner return
-    return {
+    result = {
         k: {kk: dict(vv) for kk, vv in v.items()}
         for k, v in subjects_sessions_scans.items()
     }
+    
+    # Check if any scans were found
+    if not result:
+        raise ValueError(f"No scans found in BIDS directory: {data_directory}")
+        
+    return result
 
 
 def build_series_list(

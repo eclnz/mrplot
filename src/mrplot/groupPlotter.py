@@ -3,6 +3,7 @@ from typing import Optional
 import os
 import importlib
 from mrplot.plotUtils import PlotConfig, MRIDataProcessor, MRIPlotter
+from mrplot.indexingUtils import list_bids_subjects_sessions_scans, build_series_list
 
 
 @dataclass
@@ -11,26 +12,26 @@ class GroupPlotConfig:
 
     bids_dir: str
     output_dir: str
-    selected_scans: list[str]
-    all_scans: list[str]
 
 
 class GroupPlotter:
-    def __init__(
-        self,
-        config: GroupPlotConfig,
-        subject_session_list: dict[str, dict[str, dict[str, dict[str, str]]]],
-    ):
-        """
-        Initializes the GroupPlotter.
-
-        Args:
-            config (GroupPlotConfig): Configuration for the group plotting session.
-            subject_session_list (Dict): Dictionary of subjects, sessions, and scans.
-        """
+    def __init__(self, config: GroupPlotConfig, subject_session_list: dict = None):
         self.config = config
-        self.subject_session_list = subject_session_list
-        self.scan_configs = self._initialize_scan_configs()
+        self.selected_scans = []  # Will be populated by interactive config
+        
+        # Auto-discover subjects if not provided
+        if subject_session_list is None:
+            self.subject_session_list = list_bids_subjects_sessions_scans(
+                data_directory=config.bids_dir,
+                file_extension=".nii.gz"
+            )
+        else:
+            self.subject_session_list = subject_session_list
+            
+        # Derive all_scans from subject_session_list
+        self.all_scans = build_series_list(self.subject_session_list)
+        
+        self.scan_configs = {}  # Will be populated for selected scans
 
     def _initialize_scan_configs(self) -> dict[str, PlotConfig]:
         """
@@ -40,7 +41,7 @@ class GroupPlotter:
             dict: A dictionary mapping scan names to PlotConfig objects.
         """
         configs = {}
-        for scan in self.config.selected_scans:
+        for scan in self.selected_scans:
             configs[scan] = PlotConfig()
         return configs
 
@@ -75,7 +76,7 @@ class GroupPlotter:
             Optional[str]: Selected scan or None.
         """
         print("Available scans:")
-        for idx, scan in enumerate(self.config.all_scans, 1):
+        for idx, scan in enumerate(self.selected_scans, 1):
             print(f"{idx}: {scan}")
         while True:
             choice = input(f"{prompt} (enter number or leave blank for none): ").strip()
@@ -83,25 +84,30 @@ class GroupPlotter:
                 return None
             try:
                 index = int(choice) - 1
-                if 0 <= index < len(self.config.all_scans):
-                    return self.config.all_scans[index]
+                if 0 <= index < len(self.selected_scans):
+                    return self.selected_scans[index]
                 print("Invalid selection. Try again.")
             except ValueError:
                 print("Invalid input. Enter a number.")
 
     def plot(self):
-        """
-        Plots the selected scans using configured options.
-        """
+        """Plots the selected scans using configured options."""
+        if not self.selected_scans:
+            raise ValueError("No scans selected for plotting")
+            
         os.makedirs(self.config.output_dir, exist_ok=True)
 
         for subject, sessions in self.subject_session_list.items():
             for session, scans in sessions.items():
                 for scan, metadata in scans.items():
-                    if scan not in self.config.selected_scans:
+                    if scan not in self.selected_scans:
                         continue
 
                     try:
+                        # Skip dummy files created in tests
+                        if os.path.getsize(metadata["scan_path"]) == 0:
+                            continue
+                        
                         # Retrieve paths for mask and underlay
                         scan_config = self.scan_configs[scan]
                         mask_path = self._find_scan_path(

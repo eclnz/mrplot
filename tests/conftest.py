@@ -81,3 +81,32 @@ def create_bids_hierarchy(base_path: Path, structure: dict):
                 for scan in scans:
                     scan_name = f"{subject}_{session}_desc-{scan}.nii.gz"
                     create_nifti_3d(mod_path / scan_name)
+
+@pytest.fixture
+def sample_bids_structure(tmp_path):
+    """Create a sample BIDS structure for testing"""
+    structure = {
+        "sub-01": {
+            "ses-01": {
+                "anat": ["T1w", "FLAIR"],
+                "func": ["bold"]
+            }
+        },
+        "sub-02": {
+            "ses-02": {
+                "dwi": ["dti"]
+            }
+        }
+    }
+    bids_dir = tmp_path / "bids"
+    create_bids_hierarchy(bids_dir, structure)
+    
+    return bids_dir
+
+@pytest.fixture
+def empty_bids_dir(tmp_path):
+    """Create an empty BIDS directory"""
+    bids_dir = tmp_path / "empty_bids"
+    bids_dir.mkdir()
+    return bids_dir
+
