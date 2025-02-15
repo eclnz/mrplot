@@ -50,3 +50,34 @@ def sample_mask(tmp_path):
 @pytest.fixture
 def sample_underlay(tmp_path):
     return create_nifti_3d(tmp_path / "underlay.nii.gz")
+
+@pytest.fixture
+def example_fixture():
+    return "example"
+
+def create_bids_hierarchy(base_path: Path, structure: dict):
+    """
+    Creates a BIDS directory structure from a nested dictionary specification.
+    
+    Args:
+        base_path: Path to create the structure under
+        structure: Dictionary format: {
+            "sub-01": {
+                "ses-A": {
+                    "anat": ["T1w", "FLAIR"],
+                    "func": ["bold"]
+                },
+                "ses-B": {...}
+            },
+            ...
+        }
+    """
+    for subject, sessions in structure.items():
+        for session, modalities in sessions.items():
+            for modality, scans in modalities.items():
+                mod_path = base_path / subject / session / modality
+                mod_path.mkdir(parents=True, exist_ok=True)
+                
+                for scan in scans:
+                    scan_name = f"{subject}_{session}_desc-{scan}.nii.gz"
+                    create_nifti_3d(mod_path / scan_name)

@@ -7,26 +7,23 @@ from mrplot.plotUtils import MRIDataProcessor
 from pathlib import Path
 import numpy as np
 import nibabel as nib
-from tests.conftest import create_nifti_3d, create_nifti_4d, create_nifti_5d
+from tests.conftest import create_nifti_3d, create_nifti_4d, create_nifti_5d, create_bids_hierarchy
+
+# Define the BIDS structure as a constant
+BIDS_STRUCTURE = {
+    "sub-01": {
+        "ses-1": {
+            "anat": ["T1w"],
+            "func": ["bold", "motion"]
+        }
+    }
+}
 
 @pytest.fixture(scope="module")
 def mock_bids_dir(tmp_path_factory):
+    """Fixture to create a BIDS directory structure for testing"""
     bids_dir = tmp_path_factory.mktemp("bids")
-    sub_dir = bids_dir / "sub-01" / "ses-1"
-    
-    # Create anatomical
-    anat_dir = sub_dir / "anat"
-    anat_dir.mkdir(parents=True)
-    create_nifti_3d(anat_dir / "sub-01_ses-1_T1w.nii.gz")
-    
-    # Create functional
-    func_dir = sub_dir / "func"
-    func_dir.mkdir(parents=True)
-    create_nifti_4d(func_dir / "sub-01_ses-1_bold.nii.gz")
-    
-    # Create motion (5D)
-    create_nifti_5d(func_dir / "sub-01_ses-1_motion.nii.gz")
-    
+    create_bids_hierarchy(bids_dir, BIDS_STRUCTURE)
     return bids_dir
 
 @pytest.fixture
