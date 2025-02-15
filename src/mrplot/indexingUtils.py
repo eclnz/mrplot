@@ -17,9 +17,9 @@ def list_bids_subjects_sessions_scans(
     Returns:
         Dict[str, Dict[str, Dict[str, Dict[str, str]]]]: A dictionary with subjects, sessions, and scans containing metadata.
     """
-    subjects_sessions_scans: Dict[
-        str, Dict[str, Dict[str, Dict[str, str]]]
-    ] = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    subjects_sessions_scans: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = (
+        defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    )
 
     if not Path(data_directory).is_dir():
         raise ValueError(

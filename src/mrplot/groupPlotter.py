@@ -4,16 +4,23 @@ import os
 import importlib
 from mrplot.plotUtils import PlotConfig, MRIDataProcessor, MRIPlotter
 
+
 @dataclass
 class GroupPlotConfig:
     """Configuration for group plotting."""
+
     bids_dir: str
     output_dir: str
     selected_scans: list[str]
     all_scans: list[str]
 
+
 class GroupPlotter:
-    def __init__(self, config: GroupPlotConfig, subject_session_list: dict[str, dict[str, dict[str, dict[str, str]]]]):
+    def __init__(
+        self,
+        config: GroupPlotConfig,
+        subject_session_list: dict[str, dict[str, dict[str, dict[str, str]]]],
+    ):
         """
         Initializes the GroupPlotter.
 
@@ -36,8 +43,10 @@ class GroupPlotter:
         for scan in self.config.selected_scans:
             configs[scan] = PlotConfig()
         return configs
-        
-    def _find_scan_path(self, subject: str, session: str, scan_name: str|None) -> Optional[str]:
+
+    def _find_scan_path(
+        self, subject: str, session: str, scan_name: str | None
+    ) -> Optional[str]:
         """
         Finds the path to a scan (e.g., mask or underlay) within the subject-session structure.
 
@@ -95,15 +104,19 @@ class GroupPlotter:
                     try:
                         # Retrieve paths for mask and underlay
                         scan_config = self.scan_configs[scan]
-                        mask_path = self._find_scan_path(subject, session, scan_config.mask)
-                        underlay_path = self._find_scan_path(subject, session, scan_config.underlay_image)
+                        mask_path = self._find_scan_path(
+                            subject, session, scan_config.mask
+                        )
+                        underlay_path = self._find_scan_path(
+                            subject, session, scan_config.underlay_image
+                        )
 
                         # Initialize and preprocess the MRI data
                         processor = MRIDataProcessor(
                             mri_data_path=metadata["scan_path"],
                             config=scan_config,
                             underlay_image_path=underlay_path,
-                            mask_path=mask_path
+                            mask_path=mask_path,
                         )
 
                         # Initialize and run the plotter
@@ -111,16 +124,19 @@ class GroupPlotter:
                             media_type=processor.media_type,
                             mri_data=processor.mri_slices,
                             config=scan_config,
-                            output_dir=os.path.join(self.config.output_dir, subject, session),
+                            output_dir=os.path.join(
+                                self.config.output_dir, subject, session
+                            ),
                             scan_name=scan,
-                            underlay_image=processor.underlay_slices
+                            underlay_image=processor.underlay_slices,
                         )
                         plotter.plot()
-                        
+
                         print(f"successfully plotted {scan}")
 
                     except Exception as e:
                         print(f"Error plotting {scan}: {e}")
+
 
 def get_default_config():
     config_path = importlib.resources.files("mrplot") / "configs/default.json"
