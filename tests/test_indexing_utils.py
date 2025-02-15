@@ -55,7 +55,7 @@ def test_invalid_directory():
     """Test handling of non-existent directory"""
     with pytest.raises(ValueError) as exc_info:
         list_bids_subjects_sessions_scans("/non/existent/path", ".nii.gz")
-    assert "does not exist or is not a directory" in str(exc_info.value)
+    assert "does not exist" in str(exc_info.value)
 
 @pytest.fixture
 def sample_data():
@@ -84,3 +84,40 @@ def test_ordering(sample_data):
     """Test alphabetical ordering of results"""
     result = build_series_list(sample_data)
     assert result == sorted(result)
+
+def test_invalid_bids_structure(tmp_path):
+    """Test handling of non-BIDS directory structure"""
+    # Create invalid structure without subject directories
+    (tmp_path / "invalid_dir").mkdir()
+    (tmp_path / "invalid_dir/file.txt").touch()
+
+    with pytest.raises(ValueError) as exc_info:
+        list_bids_subjects_sessions_scans(str(tmp_path / "invalid_dir"), ".nii.gz")
+    
+    assert "No valid BIDS structure found" in str(exc_info.value)
+
+def test_missing_subject_prefix(tmp_path):
+    """Test directories that look like subjects but lack 'sub-' prefix"""
+    # Create invalid subject directory
+    (tmp_path / "01").mkdir()
+    
+    with pytest.raises(ValueError) as exc_info:
+        list_bids_subjects_sessions_scans(str(tmp_path), ".nii.gz")
+    
+    assert "No valid BIDS structure found" in str(exc_info.value)
+
+def test_empty_directory(tmp_path):
+    """Test handling of empty directory"""
+    with pytest.raises(ValueError) as exc_info:
+        list_bids_subjects_sessions_scans(str(tmp_path), ".nii.gz")
+    
+    assert "No valid BIDS structure found" in str(exc_info.value)
+
+def test_directory_without_scans(tmp_path):
+    """Test directory with valid structure but no scan files"""
+    # Create valid BIDS structure without any scan files
+    (tmp_path / "sub-01/ses-A/anat").mkdir(parents=True)
+    
+    result = list_bids_subjects_sessions_scans(str(tmp_path), ".nii.gz")
+    
+    assert result == {}

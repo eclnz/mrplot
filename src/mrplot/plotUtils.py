@@ -9,6 +9,8 @@ from mrplot.plotConfig import PlotConfig
 from mrplot.indexingUtils import list_bids_subjects_sessions_scans, build_series_list
 from pathlib import Path
 import importlib.resources
+import numpy as np
+import logging
 
 plt.switch_backend("Agg")  # For non-GUI environments
 
@@ -114,6 +116,58 @@ class MRIDataProcessor:
             self.media_type = "png"
         elif slice_dims > 2:
             self.media_type = "mp4"
+
+    def process_scan(self, scan_path: str, config: PlotConfig) -> None:
+        """Process a scan and generate plots/videos"""
+        try:
+            img = nib.load(scan_path)
+            data = img.get_fdata()
+            
+            # Handle different dimensionalities
+            if data.ndim == 3:
+                self._process_3d(data, config)
+            elif data.ndim == 4:
+                self._process_4d(data, config)
+            elif data.ndim == 5:
+                self._process_5d(data, config)
+            else:
+                raise ValueError(f"Unsupported data dimensionality: {data.ndim}D")
+                
+        except Exception as e:
+            logging.error(f"Failed to process {scan_path}: {str(e)}")
+            raise
+
+    def _process_4d(self, data: np.ndarray, config: PlotConfig) -> None:
+        """Process 4D data (time series) and create videos"""
+        # Average over time dimension
+        mean_data = np.mean(data, axis=-1)
+        
+        # Create orthogonal plots
+        self._create_orthogonal_plots(mean_data, config)
+        
+        # Create video only if there are multiple time points
+        if data.shape[-1] > 1:
+            self._create_video(data, config)
+        else:
+            logging.info(f"Skipping video creation for {config.scan_name} - single time point")
+
+    def _create_video(self, data: np.ndarray, config: PlotConfig) -> None:
+        """Create an animated video from 4D data"""
+        from matplotlib.animation import FFMpegWriter
+        
+        fig = plt.figure(figsize=(10, 8))
+        writer = FFMpegWriter(fps=10)
+        
+        output_path = Path(config.output_dir) / f"{config.scan_name}_{config.plane}.mp4"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with writer.saving(fig, str(output_path), dpi=100):
+            for t in range(data.shape[-1]):
+                self._plot_frame(data[..., t], config, fig)
+                writer.grab_frame()
+                plt.clf()
+        
+        plt.close()
 
 
 class MRIPlotter:

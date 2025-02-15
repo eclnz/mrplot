@@ -23,11 +23,26 @@ def list_bids_subjects_sessions_scans(
     subjects_sessions_scans: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = (
         defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     )
+    data_path = Path(data_directory)
 
-    if not Path(data_directory).is_dir():
-        raise ValueError(
-            f"Data directory '{data_directory}' does not exist or is not a directory."
-        )
+    # 1. Check directory existence and type first
+    if not data_path.exists():
+        raise ValueError(f"Data directory '{data_directory}' does not exist")
+    if not data_path.is_dir():
+        raise ValueError(f"Path '{data_directory}' is not a directory")
+
+    # 2. Then check for BIDS structure
+    def has_valid_structure(entry: Path) -> bool:
+        if entry.name == "derivatives":
+            return True
+        if entry.name.startswith("sub-"):
+            return True
+        if entry.parent.name.startswith("sub-") and entry.name.startswith("ses-"):
+            return True
+        return False
+
+    if not any(has_valid_structure(entry) for entry in data_path.iterdir()):
+        raise ValueError(f"No valid BIDS structure found in {data_directory}")
 
     def recursive_traverse(path: Path):
         """
@@ -90,7 +105,7 @@ def list_bids_subjects_sessions_scans(
                 ] = os.path.join(path, entry.name)
 
     # Start recursive traversal
-    recursive_traverse(Path(data_directory))
+    recursive_traverse(data_path)
 
     # Convert defaultdict to standard dictionary for cleaner return
     return {
