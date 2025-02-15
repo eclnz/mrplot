@@ -61,6 +61,39 @@ def test_group_plotter_initialization(mock_config, sample_subject_session):
     assert set(plotter.scan_configs.keys()) == {'T1w', 'aMRI', 'motion'}
     assert all(isinstance(cfg, PlotConfig) for cfg in plotter.scan_configs.values())
 
+def test_group_plotter_initialization_with_nested_scans(mock_bids_dir, mock_config, sample_subject_session):
+    """Test initialization with deeply nested scan directories"""
+    # Create a deeply nested structure
+    nested_anat_path = mock_bids_dir / "derivatives" / "process" / "sub-01" / "ses-1" / "anat" / "nested_level_1" / "nested_level_2"
+    nested_anat_path.mkdir(parents=True, exist_ok=True)
+    
+    nested_func_path = mock_bids_dir / "derivatives" / "process" / "sub-01" / "ses-1" / "func" / "nested_level_1" / "nested_level_2"
+    nested_func_path.mkdir(parents=True, exist_ok=True)
+
+    # Create nested scan files
+    nested_t1w = nested_anat_path / "sub-01_ses-1_desc-T1w.nii.gz"
+    nested_t1w.touch()
+
+    nested_bold = nested_func_path / "sub-01_ses-1_task-rest_bold.nii.gz"
+    nested_bold.touch()
+
+    nested_motion = nested_func_path / "sub-01_ses-1_motion.nii.gz"
+    nested_motion.touch()
+
+    # Update the sample_subject_session with nested paths
+    sample_subject_session['sub-01']['ses-1']['T1w']['scan_path'] = str(nested_t1w)
+    sample_subject_session['sub-01']['ses-1']['aMRI']['scan_path'] = str(nested_bold)
+    sample_subject_session['sub-01']['ses-1']['motion']['scan_path'] = str(nested_motion)
+
+    # Initialize the plotter
+    plotter = GroupPlotter(mock_config, sample_subject_session)
+    
+    # Verify the plotter initializes correctly
+    assert plotter.config == mock_config
+    assert plotter.subject_session_list == sample_subject_session
+    assert set(plotter.scan_configs.keys()) == {'T1w', 'aMRI', 'motion'}
+    assert all(isinstance(cfg, PlotConfig) for cfg in plotter.scan_configs.values())
+
 def test_find_scan_path(sample_subject_session, mock_config):
     plotter = GroupPlotter(mock_config, sample_subject_session)
     
