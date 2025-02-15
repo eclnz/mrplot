@@ -20,7 +20,7 @@ def test_cli_dimensionality(data_fixture, expected_media_type, request, tmp_path
     output_dir = tmp_path / "output"
     data_path = request.getfixturevalue(data_fixture)
 
-    cmd = ["python", "-m", "mrplot.cli", data_path, str(output_dir)]
+    cmd = ["mrplot", "main", str(data_path), str(output_dir)]
 
     result = subprocess.run(cmd, check=True)
 
@@ -41,15 +41,14 @@ def test_cli_with_mask_and_underlay(
     """Test mask and underlay integration"""
     output_dir = tmp_path / "output"
     cmd = [
-        "python",
-        "-m",
-        "mrplot.cli",
-        sample_3d_nifti,
+        "mrplot",
+        "main",
+        str(sample_3d_nifti),
         str(output_dir),
         "--mask",
-        sample_mask,
+        str(sample_mask),
         "--underlay",
-        sample_underlay,
+        str(sample_underlay),
         "--crop",
         "--mask-underlay",
     ]
@@ -64,18 +63,19 @@ def test_cli_with_mask_and_underlay(
 def test_cli_invalid_input(tmp_path):
     """Test error handling for invalid input file"""
     output_dir = tmp_path / "output"
-    cmd = ["python", "-m", "mrplot.cli", "nonexistent.nii.gz", str(output_dir)]
+    cmd = ["mrplot", "main", "nonexistent.nii.gz", str(output_dir)]
 
     with pytest.raises(subprocess.CalledProcessError) as exc_info:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
 
-    assert "Input file not found" in exc_info.value.stderr
+    assert "Error: Invalid value for 'INPUT'" in exc_info.value.stderr
+    assert "Path 'nonexistent.nii.gz' does not exist" in exc_info.value.stderr
 
 
 def test_cli_output_dir_creation(sample_3d_nifti, tmp_path):
     """Test automatic creation of output directory"""
     output_dir = tmp_path / "new_directory"
-    cmd = ["python", "-m", "mrplot.cli", sample_3d_nifti, str(output_dir)]
+    cmd = ["mrplot", "main", str(sample_3d_nifti), str(output_dir)]
 
     result = subprocess.run(cmd, check=True)
     assert output_dir.exists()
@@ -85,10 +85,9 @@ def test_cli_fps_option(sample_4d_nifti, tmp_path):
     """Test FPS option validation and video generation"""
     output_dir = tmp_path / "output"
     cmd = [
-        "python",
-        "-m",
-        "mrplot.cli",
-        sample_4d_nifti,
+        "mrplot",
+        "main",
+        str(sample_4d_nifti),
         str(output_dir),
         "--fps",
         "10",

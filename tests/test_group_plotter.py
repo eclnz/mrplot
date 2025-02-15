@@ -1,7 +1,9 @@
 import os
 import pytest
 from unittest.mock import Mock, patch, MagicMock, call
-from mrplot.plotUtils import GroupPlotter, GroupPlotConfig, PlotConfig
+from mrplot.plotConfig import PlotConfig
+from mrplot.groupPlotter import GroupPlotter, GroupPlotConfig
+from mrplot.plotUtils import MRIDataProcessor
 from pathlib import Path
 import numpy as np
 import nibabel as nib
@@ -95,17 +97,57 @@ def test_select_scan(mock_input, mock_config, sample_subject_session):
     assert selected is None
 
 @patch('mrplot.plotUtils.MRIDataProcessor')
-def test_plot_error_handling(mock_processor, mock_config, sample_subject_session, capsys):
-    # Configure processor to raise error
-    mock_processor.side_effect = Exception("Test error")
-    
-    plotter = GroupPlotter(mock_config, sample_subject_session)
+def test_plot_error_handling(mocker, tmp_path, capsys):
+    """Test error handling during plot generation"""
+    # Setup BIDS-compliant directory structure
+    bids_dir = tmp_path / "bids"
+    sub_dir = bids_dir / "sub-01" / "ses-1" / "anat"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create test files with proper BIDS naming
+    good_scan = sub_dir / "sub-01_ses-1_T1w.nii.gz"
+    good_scan.touch()
+    bad_scan = sub_dir / "sub-01_ses-1_aMRI.nii.gz"  # Proper BIDS naming
+    bad_scan.touch()
+
+    # Mock user inputs for interactive mode
+    mocker.patch("click.prompt", return_value="10")  # Padding
+    mocker.patch("click.confirm", return_value=True)  # Crop
+
+    # Initialize plotter with test config
+    config = GroupPlotConfig(
+        bids_dir=str(bids_dir),
+        output_dir=str(tmp_path / "output"),
+        selected_scans=["T1w", "aMRI"],
+        all_scans=["T1w", "aMRI"]
+    )
+
+    # Force error on aMRI processing with proper path
+    def mock_processor_side_effect(mri_data_path, config):
+        if "aMRI" in str(mri_data_path):
+            raise ValueError("Invalid scan data")
+        return MRIDataProcessor(mri_data_path, config)
+
+    mocker.patch(
+        "mrplot.groupPlotter.MRIDataProcessor",
+        side_effect=mock_processor_side_effect
+    )
+
+    plotter = GroupPlotter(config, sample_subject_session)
     plotter.plot()
-    
-    # Verify error message
+
+    # Verify outputs
     captured = capsys.readouterr()
-    assert "Error plotting T1w: Test error" in captured.out
-    assert "Error plotting aMRI: Test error" in captured.out
+    
+    # Check error handling
+    assert "Error plotting aMRI: Invalid scan data" in captured.out
+    
+    # Check successful processing
+    assert "Successfully processed T1w" in captured.out
+    assert (tmp_path / "output" / "sub-01_T1w_axial.png").exists()
+    
+    # Verify error scan has no output
+    assert not (tmp_path / "output" / "sub-01_aMRI_axial.png").exists()
 
 def test_skip_non_selected_scans(mock_config, sample_subject_session):
     # Add a non-selected scan to the data
