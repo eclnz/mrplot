@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import Optional, List, Dict, Any, Tuple, TypeVar
+from typing import Optional, List, Dict, Any, Tuple, TypeVar, Union
 from skimage import measure
 from scipy.ndimage import gaussian_filter  # type: ignore
 import abc
@@ -172,35 +172,83 @@ class PlotComposer:
         self.title = title
         self.fig: Optional[plt.Figure] = None
         self.ax: Optional[plt.Axes] = None
+        self.subplots: Dict[int, List[PlotLayer]] = {}
+        self.current_subplot: int = 0
+        self.rows: int = 1
+        self.cols: int = 1
 
-    def add_layer(self, layer: PlotLayer) -> "PlotComposer":
-        self.layers.append(layer)
+    def add_subplot(self, rows: int, cols: int, index: int) -> "PlotComposer":
+        if index > rows * cols:
+            raise ValueError(f"Index {index} exceeds subplot grid size ({rows}x{cols})")
+        self.rows = rows
+        self.cols = cols
+        self.current_subplot = index - 1  # Convert to 0-based index
+        if self.current_subplot not in self.subplots:
+            self.subplots[self.current_subplot] = []
         return self
 
-    def render(self) -> Tuple[plt.Figure, plt.Axes]:
-        fig, ax = plt.subplots(figsize=self.figsize)
-        self.fig, self.ax = fig, ax
+    def add_layer(self, layer: PlotLayer) -> "PlotComposer":
+        """Add a layer to either the main plot or current subplot."""
+        if self.current_subplot == 0 and not self.subplots:
+            # Adding to main plot
+            self.layers.append(layer)
+        else:
+            # Adding to subplot
+            self.subplots[self.current_subplot].append(layer)
+        return self
 
-        for layer in self.layers:
-            layer.render(ax)
+    def render(self) -> Tuple[plt.Figure, Union[plt.Axes, np.ndarray]]:
+        if self.subplots:
+            # Create subplot grid
+            fig, axes = plt.subplots(self.rows, self.cols, figsize=self.figsize)
+            self.fig = fig
+            
+            if self.title:
+                fig.suptitle(self.title)
 
-        if self.title:
-            ax.set_title(self.title)
+            # Handle both single and multiple subplots
+            if self.rows * self.cols == 1:
+                axes = np.array([axes])
+            axes_flat = axes.flatten()
 
-        ax.set_aspect("equal")
+            # Render each subplot
+            for idx, layers in self.subplots.items():
+                if idx < len(axes_flat):
+                    ax = axes_flat[idx]
+                    for layer in layers:
+                        layer.render(ax)
+                    ax.set_aspect('equal')
+                    ax.tick_params(axis='both', which='major', labelsize=10)
+                    ax.tick_params(axis='both', which='minor', labelsize=8)
 
-        # Optionally, customize the appearance of the ticks
-        ax.tick_params(axis="both", which="major", labelsize=10)
-        ax.tick_params(axis="both", which="minor", labelsize=8)
+            return fig, axes
 
-        return fig, ax
+        else:
+            # Original single plot rendering
+            fig, ax = plt.subplots(figsize=self.figsize)
+            self.fig, self.ax = fig, ax
+
+            for layer in self.layers:
+                layer.render(ax)
+
+            if self.title:
+                ax.set_title(self.title)
+
+            ax.set_aspect('equal')
+            ax.tick_params(axis='both', which='major', labelsize=10)
+            ax.tick_params(axis='both', which='minor', labelsize=8)
+
+            return fig, ax
 
     def show(self) -> None:
+        """Display the plot(s)."""
         if self.fig is None:
             self.render()
+        plt.tight_layout()
         plt.show()
 
     def save(self, filepath: str, dpi: int = 300) -> None:
+        """Save the plot(s) to a file."""
         if self.fig is None:
             self.render()
         assert self.fig is not None  # For type checking

@@ -277,32 +277,21 @@ class SliceCollection:
             s.set_view(view_type)
             
     def plot(self, composer: PlotComposer) -> None:
-        """Plot all slices in the collection using appropriate layers based on their type.
-        Each group will be plotted in its own subplot."""
-        
-        # Count total number of groups to plot
-        total_groups = len(self.groups)
-        if total_groups == 0:
+        # Count number of groups
+        num_groups = len(self.groups)
+        if num_groups == 0:
             return
-            
-        # Calculate grid dimensions
-        nrows = int(np.ceil(np.sqrt(total_groups)))
-        ncols = int(np.ceil(total_groups / nrows))
         
-        # Create a new composer with the right grid size if one wasn't provided
-        if composer.nrows == 1 and composer.ncols == 1:
-            composer = PlotComposer(
-                nrows=nrows,
-                ncols=ncols,
-                figsize=(5*ncols, 5*nrows),
-                title=composer.title
-            )
+        # Calculate grid dimensions
+        cols = min(3, num_groups)  # Maximum 3 columns
+        rows = (num_groups + cols - 1) // cols  # Ceiling division
         
         # Plot each group in its own subplot
-        for idx, (group_key, type_dict) in enumerate(self.groups.items()):
-            composer.add_subplot(idx)
-            composer.subplot_titles[idx] = f"Subject: {group_key.split('/')[0]}, Session: {group_key.split('/')[1]}"
+        for idx, (group_key, type_dict) in enumerate(self.groups.items(), 1):
+            # Create new subplot for this group
+            composer.add_subplot(rows, cols, idx)
             
+            # Add layers for each slice type in the group
             for slice_type, slices in type_dict.items():
                 for slice_obj in slices:
                     if slice_type in [SliceType.T1, SliceType.T2]:
@@ -311,5 +300,4 @@ class SliceCollection:
                         composer.add_layer(slice_obj.to_vector_layer())
                     elif slice_type == SliceType.MASK:
                         composer.add_layer(slice_obj.to_mask_layer())
-        
         composer.show()
