@@ -1,0 +1,315 @@
+import nibabel as nib
+from typing import Optional, Tuple, List, Dict, Any, Set, Union
+import numpy as np
+from mrplot.plotting import ImageLayer, VectorFieldLayer, MaskContourLayer
+import re
+from enum import Enum, auto
+from dataclasses import dataclass
+from mrplot.plotting import PlotComposer
+
+def reorient_slice(slice_data: np.ndarray) -> np.ndarray:
+    return np.rot90(slice_data)
+
+
+class SliceType(Enum):
+    T1 = auto()
+    T2 = auto()
+    BOLD = auto()
+    MASK = auto()
+    MOTION = auto()
+    FIELDMAP = auto()
+
+
+@dataclass
+class SliceRelation:
+    source_type: SliceType
+    target_type: SliceType
+    relation_name: str
+
+
+class Slice:
+    def __init__(
+        self,
+        subject_id: str,
+        session_id: str,
+        scan_id: str,
+        path: Optional[str] = None,
+        slice_indices: Optional[Tuple[int, int, int]] = None,
+        origin: Optional[str] = None,
+        data: Optional[np.ndarray] = None,
+    ):
+        self.subject_id = subject_id
+        self.session_id = session_id
+        self.scan_id = scan_id
+        self.path = path
+        self.slice_indices = slice_indices
+        self.sagittal, self.coronal, self.axial = self._load_slices(slice_indices, data)
+        self.current = self.sagittal
+        self.current_view = "sagittal"
+        self.origin = origin
+
+    def _load_slices(
+        self,
+        slice_indices: Optional[Tuple[int, int, int]] = None,
+        data: Optional[np.ndarray] = None,
+    ):
+        if self.path is not None:
+            img = nib.as_closest_canonical(nib.load(self.path))
+            volume = np.asarray(img.dataobj).astype(np.float32)
+        elif data is not None:
+            volume = np.asarray(data).astype(np.float32)
+        else:
+            raise ValueError("Either path or data must be provided.")
+
+        if slice_indices is None:
+            slice_indices = (
+                volume.shape[0] // 2,
+                volume.shape[1] // 2,
+                volume.shape[2] // 2,
+            )
+
+        sagittal = volume[slice_indices[0], :, :, ...]
+        coronal = volume[:, slice_indices[1], :, ...]
+        axial = volume[:, :, slice_indices[2], ...]
+
+        del volume, img
+        return sagittal, coronal, axial
+
+    def set_view(self, view_type: str) -> None:
+        if view_type == "sagittal":
+            self.current = self.sagittal
+            self.current_view = "sagittal"
+        elif view_type == "coronal":
+            self.current = self.coronal
+            self.current_view = "coronal"
+        elif view_type == "axial":
+            self.current = self.axial
+            self.current_view = "axial"
+        else:
+            raise ValueError(
+                "Invalid view type. Must be 'sagittal', 'coronal', or 'axial'."
+            )
+
+    def to_vector_layer(
+        self, thin_factor: int = 6, scale: float = 10.0
+    ) -> VectorFieldLayer:
+        """Create a vector field layer from the current slice."""
+        slice_data = self.current
+
+        # Handle 4D data (vector field over time)
+        if len(slice_data.shape) == 4:
+            time_point = 0
+            if slice_data.shape[3] > 1:
+                time_point = 1
+            vector_data = slice_data[..., time_point]
+            return VectorFieldLayer(
+                np.flip(vector_data, axis=0),
+                slice_type=self.current_view,
+                thin_factor=thin_factor,
+                scale=scale,
+            )
+
+        # Handle 3D data with vector components
+        elif len(slice_data.shape) == 3 and slice_data.shape[2] >= 3:
+            vector_components = slice_data[..., :3]
+            return VectorFieldLayer(
+                vector_components,
+                slice_type=self.current_view,
+                thin_factor=thin_factor,
+                scale=scale,
+            )
+
+        else:
+            raise ValueError(
+                "Current slice data cannot be converted to a vector field layer. "
+                "Expected 4D data or 3D data with ≥3 components."
+            )
+
+    def to_image_layer(self, cmap: str = "gray", alpha: float = 1.0) -> ImageLayer:
+        """Create an image layer from the current slice."""
+        slice_data = self.current
+
+        # Handle 4D data (vector field over time)
+        if len(slice_data.shape) == 4:
+            time_point = 0
+            if slice_data.shape[3] > 1:
+                time_point = 1
+            vector_data = slice_data[..., time_point]
+            bg_data = np.sqrt(np.sum(vector_data**2, axis=-1))
+            return ImageLayer(np.rot90(bg_data, 3), cmap=cmap, alpha=alpha)
+
+        # Handle 3D data with vector components
+        elif len(slice_data.shape) == 3 and slice_data.shape[2] >= 3:
+            if slice_data.shape[2] > 3:
+                bg_data = slice_data[..., 0]
+            else:
+                bg_data = np.sqrt(np.sum(slice_data[..., :3] ** 2, axis=-1))
+            return ImageLayer(np.rot90(bg_data, 3), cmap=cmap, alpha=alpha)
+
+        # Handle 3D volumetric data over time
+        elif len(slice_data.shape) == 3:
+            return ImageLayer(np.rot90(slice_data[..., 0], 3), cmap=cmap, alpha=alpha)
+
+        # Handle 2D data (standard image)
+        else:
+            return ImageLayer(np.rot90(slice_data, 3), cmap=cmap, alpha=alpha)
+
+    def to_mask_layer(
+        self,
+        color: str = "r",
+        linewidth: float = 1.5,
+        smoothing: float = 2.0,
+        threshold: float = 0.1,
+    ) -> MaskContourLayer:
+
+        mask_data = self.current
+        return MaskContourLayer(
+            np.rot90(mask_data.astype(np.float32), 3),
+            color=color,
+            linewidth=linewidth,
+            smoothing=smoothing,
+            threshold=threshold,
+        )
+
+
+class SliceCollection:
+    def __init__(self, slices: Optional[List[Slice]] = None):
+        self.slices: List[Slice] = slices if slices is not None else []
+        # Store actual slice objects instead of indices
+        self.groups: Dict[str, Dict[SliceType, Set[Slice]]] = {}
+        # Track relationships between slices
+        self.relations: Dict[Slice, Dict[str, Set[Slice]]] = {}
+        
+    def __iter__(self):
+        return iter(self.slices)
+    
+    def add_slice(self, slice_obj: Slice, slice_type: SliceType) -> None:
+        self.slices.append(slice_obj)
+        
+        # Group by subject/session as base key
+        group_key = f"{slice_obj.subject_id}/{slice_obj.session_id}"
+        if group_key not in self.groups:
+            self.groups[group_key] = {}
+        if slice_type not in self.groups[group_key]:
+            self.groups[group_key][slice_type] = set()
+            
+        self.groups[group_key][slice_type].add(slice_obj)
+
+    def add_slices(self, slices: Union[List[Slice], "SliceCollection"], slice_type: SliceType) -> None:
+        if isinstance(slices, SliceCollection):
+            slices = slices.slices
+        
+        for slice in slices:
+            self.add_slice(slice, slice_type)
+
+    def relate_slices(self, source: Slice, target: Slice, relation: SliceRelation) -> None:
+        if source not in self.relations:
+            self.relations[source] = {}
+        if relation.relation_name not in self.relations[source]:
+            self.relations[source][relation.relation_name] = set()
+            
+        self.relations[source][relation.relation_name].add(target)
+
+    def get_related(self, slice_obj: Slice, relation_name: str) -> Set[Slice]:
+        return self.relations.get(slice_obj, {}).get(relation_name, set())
+
+    def find_slices(self, 
+                   subject_id: Optional[str] = None,
+                   session_id: Optional[str] = None,
+                   slice_type: Optional[SliceType] = None) -> Set[Slice]:
+        results = set()
+        for group_key, type_dict in self.groups.items():
+            sub, ses = group_key.split('/')
+            if (subject_id and sub != subject_id) or (session_id and ses != session_id):
+                continue
+            if slice_type:
+                results.update(type_dict.get(slice_type, set()))
+            else:
+                for slices in type_dict.values():
+                    results.update(slices)
+        return results
+
+    def __len__(self) -> int:
+        return len(self.slices)
+
+    def __getitem__(self, index: int) -> Slice:
+        if not 0 <= index < len(self.slices):
+            raise IndexError("Slice index out of range.")
+        return self.slices[index]
+
+    def filter(self, criteria: Dict[str, Any]) -> "SliceCollection":
+        valid_attributes = {"subject_id", "session_id", "scan_id", "path", "slice_indices", "current_view"}
+        invalid_keys = set(criteria.keys()) - valid_attributes
+        if invalid_keys:
+            raise ValueError(f"Invalid filter criteria: {invalid_keys}. Valid attributes are: {valid_attributes}")
+        
+        filtered_slices = []
+        for slice_obj in self.slices:
+            matches = True
+            for key, value in criteria.items():
+                try:
+                    attr_value = getattr(slice_obj, key)
+                    # Handle regex patterns for string attributes
+                    if isinstance(value, str) and isinstance(attr_value, str):
+                        if not re.match(value, attr_value):
+                            matches = False
+                            break
+                    # Handle exact matches for non-string attributes
+                    elif attr_value != value:
+                        matches = False
+                        break
+                except AttributeError as e:
+                    raise AttributeError(f"Error accessing attribute '{key}' on slice: {e}")
+                except re.error as e:
+                    raise ValueError(f"Invalid regex pattern '{value}' for {key}: {e}")
+            
+            if matches:
+                filtered_slices.append(slice_obj)
+        
+        if not filtered_slices:
+            print(f"Warning: No slices match the filter criteria: {criteria}")
+        
+        return SliceCollection()
+
+    def set_view_all(self, view_type: str) -> None:
+        """Sets the view for all slices in the collection."""
+        for s in self.slices:
+            s.set_view(view_type)
+            
+    def plot(self, composer: PlotComposer) -> None:
+        """Plot all slices in the collection using appropriate layers based on their type.
+        Each group will be plotted in its own subplot."""
+        
+        # Count total number of groups to plot
+        total_groups = len(self.groups)
+        if total_groups == 0:
+            return
+            
+        # Calculate grid dimensions
+        nrows = int(np.ceil(np.sqrt(total_groups)))
+        ncols = int(np.ceil(total_groups / nrows))
+        
+        # Create a new composer with the right grid size if one wasn't provided
+        if composer.nrows == 1 and composer.ncols == 1:
+            composer = PlotComposer(
+                nrows=nrows,
+                ncols=ncols,
+                figsize=(5*ncols, 5*nrows),
+                title=composer.title
+            )
+        
+        # Plot each group in its own subplot
+        for idx, (group_key, type_dict) in enumerate(self.groups.items()):
+            composer.add_subplot(idx)
+            composer.subplot_titles[idx] = f"Subject: {group_key.split('/')[0]}, Session: {group_key.split('/')[1]}"
+            
+            for slice_type, slices in type_dict.items():
+                for slice_obj in slices:
+                    if slice_type in [SliceType.T1, SliceType.T2]:
+                        composer.add_layer(slice_obj.to_image_layer())
+                    elif slice_type == SliceType.MOTION:
+                        composer.add_layer(slice_obj.to_vector_layer())
+                    elif slice_type == SliceType.MASK:
+                        composer.add_layer(slice_obj.to_mask_layer())
+        
+        composer.show()
