@@ -113,6 +113,7 @@ class BIDS:
                             slice_indices=slice_indices,
                             origin=scan.origin,
                         )
+                        slice.load_slices()
                         slices.append(slice)
         if not slices:
             raise ValueError(f"No scans found matching regex '{scan_regex}'")

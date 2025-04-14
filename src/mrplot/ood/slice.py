@@ -2,6 +2,7 @@ import nibabel as nib
 from typing import Optional, Tuple, List, Dict, Any, Set, Union
 import numpy as np
 import re
+import gc
 from enum import Enum, auto
 from dataclasses import dataclass
 from mrplot.ood.plotting import ImageLayer, VectorFieldLayer, MaskContourLayer
@@ -45,10 +46,22 @@ class Slice:
         self.scan_id = scan_id
         self.path = path
         self.slice_indices = slice_indices
+        self.origin = origin
+        self.sagittal = None
+        self.coronal = None
+        self.axial = None
+        self.current = None
+        self.current_view = "sagittal"
+
+    def load_slices(
+        self,
+        slice_indices: Optional[Tuple[int, int, int]] = None,
+        data: Optional[np.ndarray] = None,
+    ):
+        """Load slices from path or data and store them in the slice object."""
         self.sagittal, self.coronal, self.axial = self._load_slices(slice_indices, data)
         self.current = self.sagittal
         self.current_view = "sagittal"
-        self.origin = origin
 
     def _load_slices(
         self,
@@ -56,8 +69,9 @@ class Slice:
         data: Optional[np.ndarray] = None,
     ):
         if self.path is not None:
-            img = nib.as_closest_canonical(nib.load(self.path))
-            volume = np.asarray(img.dataobj).astype(np.float32)
+            volume = np.asarray(
+                nib.as_closest_canonical(nib.load(self.path)).dataobj
+            ).astype(np.float32)
         elif data is not None:
             volume = np.asarray(data).astype(np.float32)
         else:
@@ -69,12 +83,16 @@ class Slice:
                 volume.shape[1] // 2,
                 volume.shape[2] // 2,
             )
+            self.slice_indices = slice_indices
 
-        sagittal = volume[slice_indices[0], :, :, ...]
-        coronal = volume[:, slice_indices[1], :, ...]
-        axial = volume[:, :, slice_indices[2], ...]
-
-        del volume, img
+        # Create slices - make copies to ensure they persist when volume is deleted
+        sagittal = volume[slice_indices[0], :, :, ...].copy()
+        coronal = volume[:, slice_indices[1], :, ...].copy()
+        axial = volume[:, :, slice_indices[2], ...].copy()
+        
+        del volume
+        gc.collect()
+        
         return sagittal, coronal, axial
 
     def set_view(self, view_type: str) -> None:
@@ -96,6 +114,9 @@ class Slice:
         self, thin_factor: int = 6, scale: float = 10.0
     ) -> VectorFieldLayer:
         """Create a vector field layer from the current slice."""
+        if self.current is None:
+            raise ValueError("No slice data available. Call load_slices first.")
+            
         slice_data = self.current
 
         # Handle 4D data (vector field over time)
@@ -129,6 +150,9 @@ class Slice:
 
     def to_image_layer(self, cmap: str = "gray", alpha: float = 1.0) -> ImageLayer:
         """Create an image layer from the current slice."""
+        if self.current is None:
+            raise ValueError("No slice data available. Call load_slices first.")
+            
         slice_data = self.current
 
         # Handle 4D data (vector field over time)
@@ -163,6 +187,8 @@ class Slice:
         smoothing: float = 2.0,
         threshold: float = 0.1,
     ) -> MaskContourLayer:
+        if self.current is None:
+            raise ValueError("No slice data available. Call load_slices first.")
 
         mask_data = self.current
         return MaskContourLayer(
