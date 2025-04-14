@@ -4,6 +4,7 @@ import nibabel as nib
 import re
 from typing import List, Union, Optional, Tuple
 from mrplot.slice import Slice, SliceCollection
+from mrplot.print import print_tree
 
 
 def validate_path(path: str):
@@ -71,49 +72,33 @@ class BIDS:
         Args:
             include_details: If True, include additional details like paths
         """
-        for i, subject in enumerate(self.subjects):
-            # Subject prefix shows if it's the last subject
-            is_last_subject = i == len(self.subjects) - 1
-            subject_prefix = "└── " if is_last_subject else "├── "
-            print(f"{subject_prefix}{subject}")
-
-            # Indent for session level depends on whether this was the last subject
-            session_indent = "    " if is_last_subject else "│   "
-
-            for j, session in enumerate(subject.sessions):
-                # Session prefix shows if it's the last session for this subject
-                is_last_session = j == len(subject.sessions) - 1
-                session_prefix = "└── " if is_last_session else "├── "
-                print(f"{session_indent}{session_prefix}{session}")
-
-                # Indent for scan level depends on whether this was the last session
-                scan_indent = (
-                    f"{session_indent}    "
-                    if is_last_session
-                    else f"{session_indent}│   "
-                )
-
-                for k, scan in enumerate(session.scans):
-                    # Scan prefix shows if it's the last scan for this session
-                    is_last_scan = k == len(session.scans) - 1
-                    scan_prefix = "└── " if is_last_scan else "├── "
-
-                    # Show path details if requested
+        nodes = []
+        for subject in self.subjects:
+            nodes.append((0, str(subject)))
+            
+            for session in subject.sessions:
+                nodes.append((1, str(session)))
+                
+                for scan in session.scans:
                     if include_details:
                         scan_info = f"{scan} ({scan.path})"
                     else:
                         scan_info = str(scan)
-
-                    print(f"{scan_indent}{scan_prefix}{scan_info}")
+                    nodes.append((2, scan_info))
+        
+        print_tree(nodes)
 
     def create_slices(
-        self, scan_regex: str, origin_regex: str, slice_indices: Optional[Tuple[int, int, int]] = None
+        self, scan_regex: str, origin_regex: str, required_dims: Optional[int] = None, slice_indices: Optional[Tuple[int, int, int]] = None
     ) -> SliceCollection:
         slices = []
         for subject in self.subjects:
             for session in subject.sessions:
                 for scan in session.scans:
                     if re.match(scan_regex, scan.scan_name) and re.match(origin_regex, scan.origin):
+                        if required_dims is not None:
+                            if len(scan.shape) != required_dims:
+                                continue
                         slice = Slice(
                             subject_id=subject.get_id(),
                             session_id=session.get_id(),
@@ -232,11 +217,7 @@ class Scan:
         self.path = path
         self.scan_name = self._get_scan_name()
         self.origin = self._get_origin()
-        try:
-            self.header = self._load_header()
-        except Exception as e:
-            print(f"Warning: Failed to load header for {path}: {str(e)}")
-            self.header = None
+        self.shape = self._get_shape()
 
         try:
             self.json_sidecar = self._load_json_sidecar()
@@ -245,7 +226,7 @@ class Scan:
             self.json_sidecar = None
 
     def __repr__(self) -> str:
-        return f"Scan(name={self.scan_name})"
+        return f"Scan({self.scan_name}) - {self.origin}"
 
     def _get_scan_name(self) -> str:
         if len(os.path.basename(self.path).split("_")) > 2:
@@ -266,17 +247,14 @@ class Scan:
                 return path_parts[derivatives_index + 1]
             return "derivatives"
         elif "raw" in path_parts:
-            raw_index = path_parts.index("raw")
-            if len(path_parts) > raw_index + 1:
-                return path_parts[raw_index + 1]
             return "raw"
         return "unknown"
     
-    def _load_header(self):
+    def _get_shape(self) -> Tuple[int, int, int]:
         try:
-            return nib.load(self.path).header
+            return nib.load(self.path).shape
         except Exception as e:
-            raise RuntimeError(f"Failed to load NIfTI header: {str(e)}")
+            raise RuntimeError(f"Failed to get shape of {self.path}: {str(e)}")
 
     def _load_json_sidecar(self) -> Union[dict, None]:
         json_path = self.path.replace(".nii.gz", ".json").replace(".nii", ".json")

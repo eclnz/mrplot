@@ -6,6 +6,7 @@ import re
 from enum import Enum, auto
 from dataclasses import dataclass
 from mrplot.plotting import PlotComposer
+from mrplot.print import print_tree
 
 def reorient_slice(slice_data: np.ndarray) -> np.ndarray:
     return np.rot90(slice_data)
@@ -60,7 +61,7 @@ class Slice:
             volume = np.asarray(data).astype(np.float32)
         else:
             raise ValueError("Either path or data must be provided.")
-
+        
         if slice_indices is None:
             slice_indices = (
                 volume.shape[0] // 2,
@@ -71,10 +72,10 @@ class Slice:
         sagittal = volume[slice_indices[0], :, :, ...]
         coronal = volume[:, slice_indices[1], :, ...]
         axial = volume[:, :, slice_indices[2], ...]
-
+        
         del volume, img
         return sagittal, coronal, axial
-
+    
     def set_view(self, view_type: str) -> None:
         if view_type == "sagittal":
             self.current = self.sagittal
@@ -95,7 +96,7 @@ class Slice:
     ) -> VectorFieldLayer:
         """Create a vector field layer from the current slice."""
         slice_data = self.current
-
+        
         # Handle 4D data (vector field over time)
         if len(slice_data.shape) == 4:
             time_point = 0
@@ -103,22 +104,22 @@ class Slice:
                 time_point = 1
             vector_data = slice_data[..., time_point]
             return VectorFieldLayer(
-                np.flip(vector_data, axis=0),
-                slice_type=self.current_view,
-                thin_factor=thin_factor,
+                    np.flip(vector_data, axis=0),
+                    slice_type=self.current_view,
+                    thin_factor=thin_factor,
                 scale=scale,
             )
-
+            
         # Handle 3D data with vector components
         elif len(slice_data.shape) == 3 and slice_data.shape[2] >= 3:
             vector_components = slice_data[..., :3]
             return VectorFieldLayer(
-                vector_components,
-                slice_type=self.current_view,
-                thin_factor=thin_factor,
+                    vector_components,
+                    slice_type=self.current_view,
+                    thin_factor=thin_factor,
                 scale=scale,
             )
-
+            
         else:
             raise ValueError(
                 "Current slice data cannot be converted to a vector field layer. "
@@ -157,11 +158,11 @@ class Slice:
     def to_mask_layer(
         self,
         color: str = "r",
-        linewidth: float = 1.5,
-        smoothing: float = 2.0,
+                     linewidth: float = 1.5,
+                     smoothing: float = 2.0,
         threshold: float = 0.1,
     ) -> MaskContourLayer:
-
+        
         mask_data = self.current
         return MaskContourLayer(
             np.rot90(mask_data.astype(np.float32), 3),
@@ -199,8 +200,35 @@ class SliceCollection:
         if isinstance(slices, SliceCollection):
             slices = slices.slices
         
-        for slice in slices:
-            self.add_slice(slice, slice_type)
+        # Track which groups we're adding to
+        affected_groups: Dict[str, int] = {}
+        
+        for slice_obj in slices:
+            group_key = f"{slice_obj.subject_id}/{slice_obj.session_id}"
+            affected_groups[group_key] = affected_groups.get(group_key, 0) + 1
+            
+            # Check if this type already exists in the group
+            if (group_key in self.groups and 
+                slice_type in self.groups[group_key] and 
+                len(self.groups[group_key][slice_type]) > 0):
+                print(f"Warning: Group {group_key} already has slices of type {slice_type.name}")
+            
+            self.add_slice(slice_obj, slice_type)
+        
+        # Check for uneven groups
+        for group_key, type_dict in self.groups.items():
+            sizes = {slice_type.name: len(slices) for slice_type, slices in type_dict.items()}
+            if len(set(sizes.values())) > 1:
+                print(f"Warning: Group {group_key} has uneven numbers of slices:")
+                for type_name, size in sizes.items():
+                    print(f"  - {type_name}: {size} slice(s)")
+                    
+        # Check if any affected groups have different numbers of slices
+        affected_sizes = {group: count for group, count in affected_groups.items()}
+        if len(set(affected_sizes.values())) > 1:
+            print(f"Warning: Newly added slices have uneven distribution across groups:")
+            for group, count in affected_sizes.items():
+                print(f"  - {group}: {count} slice(s) of type {slice_type.name}")
 
     def relate_slices(self, source: Slice, target: Slice, relation: SliceRelation) -> None:
         if source not in self.relations:
@@ -276,12 +304,36 @@ class SliceCollection:
         for s in self.slices:
             s.set_view(view_type)
             
-    def plot(self, composer: PlotComposer) -> None:
+    def plot(
+        self, 
+        view_type: str = "sagittal",
+        plot_kwargs: Optional[Dict[SliceType, Dict[str, Any]]] = None,
+        title: Optional[str] = None
+    ) -> None:
+        # Set default plotting parameters if none provided
+        default_kwargs: Dict[SliceType, Dict[str, Any]] = {
+            SliceType.MOTION: {'thin_factor': 6, 'scale': 10.0},
+            SliceType.T1: {'cmap': 'gray', 'alpha': 1.0},
+            SliceType.T2: {'cmap': 'gray', 'alpha': 1.0},
+            SliceType.MASK: {'color': 'r', 'linewidth': 1.5},
+            SliceType.BOLD: {'cmap': 'gray', 'alpha': 1.0},
+            SliceType.FIELDMAP: {'cmap': 'gray', 'alpha': 1.0}
+        }
+        if title is None:
+            title = f"Slice Collection - {view_type} view"
+        composer = PlotComposer(title=title)
+        
+        # Update defaults with user-provided kwargs
+        if plot_kwargs:
+            for slice_type, kwargs in plot_kwargs.items():
+                if slice_type in default_kwargs:
+                    default_kwargs[slice_type] = {**default_kwargs[slice_type], **kwargs}
+        
         # Count number of groups
         num_groups = len(self.groups)
         if num_groups == 0:
             return
-        
+            
         # Calculate grid dimensions
         cols = min(3, num_groups)  # Maximum 3 columns
         rows = (num_groups + cols - 1) // cols  # Ceiling division
@@ -291,13 +343,72 @@ class SliceCollection:
             # Create new subplot for this group
             composer.add_subplot(rows, cols, idx)
             
+            # Set view type for all slices in this group
+            for slices in type_dict.values():
+                for slice_obj in slices:
+                    slice_obj.set_view(view_type)
+            
             # Add layers for each slice type in the group
             for slice_type, slices in type_dict.items():
+                plot_settings = dict(default_kwargs.get(slice_type, {}))
                 for slice_obj in slices:
-                    if slice_type in [SliceType.T1, SliceType.T2]:
-                        composer.add_layer(slice_obj.to_image_layer())
+                    if slice_type in [SliceType.T1, SliceType.T2, SliceType.BOLD, SliceType.FIELDMAP]:
+                        composer.add_layer(slice_obj.to_image_layer(**plot_settings))
                     elif slice_type == SliceType.MOTION:
-                        composer.add_layer(slice_obj.to_vector_layer())
+                        composer.add_layer(slice_obj.to_vector_layer(**plot_settings))
                     elif slice_type == SliceType.MASK:
-                        composer.add_layer(slice_obj.to_mask_layer())
+                        composer.add_layer(slice_obj.to_mask_layer(**plot_settings))
         composer.show()
+
+    def print_tree(self, include_details: bool = False) -> None:
+        """Print a visual tree representation of the slice collection structure.
+        
+        Args:
+            include_details: If True, include additional details like paths and indices
+        """
+        if not self.slices:
+            print("Empty collection")
+            return
+            
+        nodes = []
+        
+        if not self.groups:
+            # Untyped collection (from create_slices) - group by subject/session
+            groups: Dict[str, Set[Slice]] = {}
+            for slice_obj in self.slices:
+                key = f"{slice_obj.subject_id}/{slice_obj.session_id}"
+                if key not in groups:
+                    groups[key] = set()
+                groups[key].add(slice_obj)
+            
+            # Create the tree structure
+            for group_key, slices in groups.items():
+                nodes.append((0, f"Group: {group_key}"))
+                
+                for i, slice_obj in enumerate(sorted(slices, key=lambda x: x.scan_id)):
+                    details = f"Slice: {slice_obj.scan_id}"
+                    if include_details:
+                        if slice_obj.path:
+                            details += f", path: {slice_obj.path}"
+                        if slice_obj.slice_indices:
+                            details += f", indices: {slice_obj.slice_indices}"
+                    nodes.append((1, details))
+        else:
+            # Typed collection (after add_slices)
+            for group_key, type_dict in self.groups.items():
+                nodes.append((0, f"Group: {group_key}"))
+                
+                for slice_type, slices in type_dict.items():
+                    nodes.append((1, f"{slice_type.name} ({len(slices)} slices)"))
+                    
+                    if slices:  # Only proceed if there are slices of this type
+                        for slice_obj in sorted(list(slices), key=lambda x: x.scan_id):
+                            details = f"Slice: {slice_obj.scan_id}"
+                            if include_details:
+                                if slice_obj.path:
+                                    details += f", path: {slice_obj.path}"
+                                if slice_obj.slice_indices:
+                                    details += f", indices: {slice_obj.slice_indices}"
+                            nodes.append((2, details))
+        
+        print_tree(nodes)
