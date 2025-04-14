@@ -29,6 +29,107 @@ class SliceRelation:
     target_type: SliceType
     relation_name: str
 
+class CroppedSlice:
+    def __init__(self, slice: "Slice", padding: int = 0):
+        self.slice = slice
+        self.sagittal = slice.sagittal
+        self.coronal = slice.coronal
+        self.axial = slice.axial
+        self.padding = padding
+        self.crop_bounds: Dict[str, Optional[Tuple[Tuple[int, int], Tuple[int, int]]]] = {
+            "sagittal": None,
+            "coronal": None,
+            "axial": None
+        }
+        # Calculate crop bounds for all planes
+        self._calculate_all_crop_bounds()
+
+    def _calculate_all_crop_bounds(self) -> None:
+        """Calculate crop bounds for all three planes."""
+        if self.sagittal is not None:
+            self.crop_bounds["sagittal"] = self.find_single_crop_bounds(self.sagittal, self.padding)
+        
+        if self.coronal is not None:
+            self.crop_bounds["coronal"] = self.find_single_crop_bounds(self.coronal, self.padding)
+            
+        if self.axial is not None:
+            self.crop_bounds["axial"] = self.find_single_crop_bounds(self.axial, self.padding)
+
+    def crop_to_nonzero(self) -> None:
+        """Crop all planes to their respective non-zero regions."""
+        if self.sagittal is None or self.coronal is None or self.axial is None:
+            raise ValueError("Slices must be loaded before cropping.")
+
+        # Crop each plane with its own bounds
+        if self.crop_bounds["sagittal"]:
+            self.sagittal = self._apply_single_crop_bounds(self.sagittal, self.crop_bounds["sagittal"])
+        
+        if self.crop_bounds["coronal"]:
+            self.coronal = self._apply_single_crop_bounds(self.coronal, self.crop_bounds["coronal"])
+            
+        if self.crop_bounds["axial"]:
+            self.axial = self._apply_single_crop_bounds(self.axial, self.crop_bounds["axial"])
+            
+    def find_single_crop_bounds(self, slice_data: np.ndarray, padding: int = 0) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+        bin_data = slice_data > 0
+        
+        if bin_data.ndim > 2:
+            bin_mask = np.any(bin_data[..., :3], axis=-1)
+        else:
+            bin_mask = bin_data
+            
+        # Find row and column indices of non-zero elements
+        rows = np.any(bin_mask, axis=1)
+        cols = np.any(bin_mask, axis=0)
+        
+        # Get bounds with padding
+        row_indices = np.where(rows)[0]
+        col_indices = np.where(cols)[0]
+        
+        if len(row_indices) == 0 or len(col_indices) == 0:
+            # If no non-zero elements, return full bounds
+            return (0, slice_data.shape[0]-1), (0, slice_data.shape[1]-1)
+        
+        # Get min/max indices with padding
+        rmin = max(0, row_indices.min() - padding)
+        rmax = min(bin_mask.shape[0] - 1, row_indices.max() + padding)
+        cmin = max(0, col_indices.min() - padding)
+        cmax = min(bin_mask.shape[1] - 1, col_indices.max() + padding)
+        
+        return (rmin, rmax), (cmin, cmax)
+
+    def _apply_single_crop_bounds(self, slice_data: np.ndarray, bounds: Tuple[Tuple[int, int], Tuple[int, int]]) -> np.ndarray:
+        rmin, rmax = bounds[0]
+        cmin, cmax = bounds[1]
+
+        has_extra_dims = slice_data.ndim > 2
+        
+        if has_extra_dims:
+            return slice_data[rmin:rmax+1, cmin:cmax+1, ...]
+        else:
+            return slice_data[rmin:rmax+1, cmin:cmax+1]
+
+    def apply_crop_bounds(self, crop_bounds: Dict[str, Optional[Tuple[Tuple[int, int], Tuple[int, int]]]]) -> None:
+        if self.sagittal is None or self.coronal is None or self.axial is None:
+            raise ValueError("Slices must be loaded before cropping.")
+        
+        if "sagittal" in crop_bounds and crop_bounds["sagittal"] is not None and self.sagittal is not None:
+            self.sagittal = self._apply_single_crop_bounds(self.sagittal, crop_bounds["sagittal"])
+            
+        if "coronal" in crop_bounds and crop_bounds["coronal"] is not None and self.coronal is not None:
+            self.coronal = self._apply_single_crop_bounds(self.coronal, crop_bounds["coronal"])
+            
+        if "axial" in crop_bounds and crop_bounds["axial"] is not None and self.axial is not None:
+            self.axial = self._apply_single_crop_bounds(self.axial, crop_bounds["axial"])
+        
+    def get_crop_bounds(self, view_type: Optional[str] = None) -> Dict[str, Optional[Tuple[Tuple[int, int], Tuple[int, int]]]]:
+        """Get crop bounds for all planes or a specific plane."""
+        if view_type:
+            if view_type not in self.crop_bounds:
+                raise ValueError(f"Invalid view type: {view_type}. Must be sagittal, coronal, or axial.")
+            return {view_type: self.crop_bounds[view_type]}
+        return self.crop_bounds
+
 
 class Slice:
     def __init__(
@@ -52,6 +153,10 @@ class Slice:
         self.axial = None
         self.current = None
         self.current_view = "sagittal"
+        
+        # Load slices if data or path is provided
+        if data is not None or path is not None:
+            self.load_slices(slice_indices, data)
 
     def load_slices(
         self,
@@ -94,6 +199,8 @@ class Slice:
         gc.collect()
         
         return sagittal, coronal, axial
+
+
 
     def set_view(self, view_type: str) -> None:
         if view_type == "sagittal":
@@ -363,15 +470,41 @@ class SliceCollection:
         for s in self.slices:
             s.set_view(view_type)
 
+    def _crop_slice_view(self, slice_obj: Slice, view_type: str, crop_bounds: Optional[Dict[str, Optional[Tuple[Tuple[int, int], Tuple[int, int]]]]] = None) -> None:
+        
+        # Create a CroppedSlice from the original slice
+        cropped_slice = CroppedSlice(slice_obj, self.padding if hasattr(self, "padding") else 0)
+        
+        # Apply custom crop bounds if provided, otherwise use the calculated ones
+        if crop_bounds:
+            cropped_slice.apply_crop_bounds(crop_bounds)
+        else:
+            cropped_slice.crop_to_nonzero()
+        
+        # Update the original slice with the cropped data
+        slice_obj.sagittal = cropped_slice.sagittal
+        slice_obj.coronal = cropped_slice.coronal
+        slice_obj.axial = cropped_slice.axial
+        
+        # Update current view
+        if view_type == "sagittal":
+            slice_obj.current = cropped_slice.sagittal
+        elif view_type == "coronal":
+            slice_obj.current = cropped_slice.coronal
+        else:  # axial
+            slice_obj.current = cropped_slice.axial
+
     def plot(
         self,
         view_type: str = "sagittal",
         plot_kwargs: Optional[Dict[SliceType, Dict[str, Any]]] = None,
         title: Optional[str] = None,
+        crop_to_type: Optional[SliceType] = None,
+        crop_padding: int = 0,
     ) -> None:
         # Set default plotting parameters if none provided
         default_kwargs: Dict[SliceType, Dict[str, Any]] = {
-            SliceType.MOTION: {"thin_factor": 6, "scale": 10.0},
+            SliceType.MOTION: {"thin_factor": 6, "scale": 50.0},
             SliceType.T1: {"cmap": "gray", "alpha": 1.0},
             SliceType.T2: {"cmap": "gray", "alpha": 1.0},
             SliceType.MASK: {"color": "r", "linewidth": 1.5},
@@ -412,6 +545,20 @@ class SliceCollection:
             for slices in type_dict.values():
                 for slice_obj in slices:
                     slice_obj.set_view(view_type)
+                    
+            # Apply cropping if requested
+            if crop_to_type and crop_to_type in type_dict and type_dict[crop_to_type]:
+                # Get reference slice
+                ref_slice = next(iter(type_dict[crop_to_type]))
+                ref_slice.set_view(view_type)
+                
+                # Create a CroppedSlice to get crop bounds for all planes
+                ref_crop_bounds = CroppedSlice(ref_slice, crop_padding).get_crop_bounds()
+                
+                # Apply crop bounds to all slices in the group
+                for s_type, slices in type_dict.items():
+                    for s in slices:
+                        self._crop_slice_view(s, view_type, ref_crop_bounds)
 
             # Add layers for each slice type in the group
             for slice_type, slices in type_dict.items():
@@ -429,7 +576,7 @@ class SliceCollection:
                     elif slice_type == SliceType.MASK:
                         composer.add_layer(slice_obj.to_mask_layer(**plot_settings))
         # Disable ticks and labels for all subplots
-        composer.set_all_ticks(show_ticks=False, show_tick_labels=False)
+        composer.set_all_ticks(show_ticks=True, show_tick_labels=True)
 
         composer.show()
 
