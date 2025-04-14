@@ -75,27 +75,33 @@ class BIDS:
         nodes = []
         for subject in self.subjects:
             nodes.append((0, str(subject)))
-            
+
             for session in subject.sessions:
                 nodes.append((1, str(session)))
-                
+
                 for scan in session.scans:
                     if include_details:
                         scan_info = f"{scan} ({scan.path})"
                     else:
                         scan_info = str(scan)
                     nodes.append((2, scan_info))
-        
+
         print_tree(nodes)
 
     def create_slices(
-        self, scan_regex: str, origin_regex: str, required_dims: Optional[int] = None, slice_indices: Optional[Tuple[int, int, int]] = None
+        self,
+        scan_regex: str,
+        origin_regex: str,
+        required_dims: Optional[int] = None,
+        slice_indices: Optional[Tuple[int, int, int]] = None,
     ) -> SliceCollection:
         slices = []
         for subject in self.subjects:
             for session in subject.sessions:
                 for scan in session.scans:
-                    if re.match(scan_regex, scan.scan_name) and re.match(origin_regex, scan.origin):
+                    if re.match(scan_regex, scan.scan_name) and re.match(
+                        origin_regex, scan.origin
+                    ):
                         if required_dims is not None:
                             if len(scan.shape) != required_dims:
                                 continue
@@ -249,10 +255,10 @@ class Scan:
         elif "raw" in path_parts:
             return "raw"
         return "unknown"
-    
+
     def _get_shape(self) -> Tuple[int, int, int]:
         try:
-            return nib.load(self.path).shape #type: ignore
+            return nib.load(self.path).shape  # type: ignore
         except Exception as e:
             raise RuntimeError(f"Failed to get shape of {self.path}: {str(e)}")
 

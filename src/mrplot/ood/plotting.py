@@ -202,7 +202,7 @@ class PlotComposer:
             # Create subplot grid
             fig, axes = plt.subplots(self.rows, self.cols, figsize=self.figsize)
             self.fig = fig
-            
+
             if self.title:
                 fig.suptitle(self.title)
 
@@ -217,9 +217,9 @@ class PlotComposer:
                     ax = axes_flat[idx]
                     for layer in layers:
                         layer.render(ax)
-                    ax.set_aspect('equal')
-                    ax.tick_params(axis='both', which='major', labelsize=10)
-                    ax.tick_params(axis='both', which='minor', labelsize=8)
+                    ax.set_aspect("equal")
+                    ax.tick_params(axis="both", which="major", labelsize=10)
+                    ax.tick_params(axis="both", which="minor", labelsize=8)
 
             return fig, axes
 
@@ -234,9 +234,9 @@ class PlotComposer:
             if self.title:
                 ax.set_title(self.title)
 
-            ax.set_aspect('equal')
-            ax.tick_params(axis='both', which='major', labelsize=10)
-            ax.tick_params(axis='both', which='minor', labelsize=8)
+            ax.set_aspect("equal")
+            ax.tick_params(axis="both", which="major", labelsize=10)
+            ax.tick_params(axis="both", which="minor", labelsize=8)
 
             return fig, ax
 
