@@ -235,11 +235,18 @@ class SliceCollection:
         # Check if any affected groups have different numbers of slices
         affected_sizes = {group: count for group, count in affected_groups.items()}
         if len(set(affected_sizes.values())) > 1:
-            print(
-                f"Warning: Newly added slices have uneven distribution across groups:"
-            )
+            print("Warning: Newly added slices have uneven distribution across groups:")
             for group, count in affected_sizes.items():
                 print(f"  - {group}: {count} slice(s) of type {slice_type.name}")
+
+        # Check if any groups are unaffectd by the addition of slices
+        unaffected_groups = set(self.groups.keys()) - set(affected_groups.keys())
+        if unaffected_groups:
+            print(
+                f"Warning: The following groups were not affected by the addition of {slice_type.name} slices:"
+            )
+            for group in unaffected_groups:
+                print(f"  - {group}")
 
     def relate_slices(
         self, source: Slice, target: Slice, relation: SliceRelation
