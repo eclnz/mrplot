@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, Tuple, Optional, Callable, TypeVar, Set, Iterable, Union, Collection
+from typing import Dict, Any, List, Tuple, Optional, Callable, TypeVar, Set
 
 T = TypeVar('T')
 K = TypeVar('K')

@@ -3,8 +3,8 @@ import json
 import nibabel as nib
 import re
 from typing import List, Union, Optional, Tuple
-from mrplot.slice import Slice, SliceCollection
-from mrplot.print import print_tree
+from mrplot.ood.slice import Slice, SliceCollection
+from mrplot.ood.print import print_tree
 
 
 def validate_path(path: str):
@@ -252,7 +252,7 @@ class Scan:
     
     def _get_shape(self) -> Tuple[int, int, int]:
         try:
-            return nib.load(self.path).shape
+            return nib.load(self.path).shape #type: ignore
         except Exception as e:
             raise RuntimeError(f"Failed to get shape of {self.path}: {str(e)}")
 

@@ -1,12 +1,12 @@
 import nibabel as nib
 from typing import Optional, Tuple, List, Dict, Any, Set, Union
 import numpy as np
-from mrplot.plotting import ImageLayer, VectorFieldLayer, MaskContourLayer
 import re
 from enum import Enum, auto
 from dataclasses import dataclass
-from mrplot.plotting import PlotComposer
-from mrplot.print import print_tree
+from mrplot.ood.plotting import ImageLayer, VectorFieldLayer, MaskContourLayer
+from mrplot.ood.plotting import PlotComposer
+from mrplot.ood.print import print_tree
 
 def reorient_slice(slice_data: np.ndarray) -> np.ndarray:
     return np.rot90(slice_data)
