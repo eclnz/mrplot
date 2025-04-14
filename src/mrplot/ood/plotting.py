@@ -176,6 +176,14 @@ class PlotComposer:
         self.current_subplot: int = 0
         self.rows: int = 1
         self.cols: int = 1
+        self._subplot_labels: Dict[int, Dict[str, str]] = {}
+        self._subplot_ticks: Dict[int, Dict[str, Any]] = {}
+        self._global_tick_settings: Dict[str, Any] = {
+            "show_ticks": True,
+            "show_tick_labels": True,
+            "tick_size": 10,
+        }
+        self.title_fontsize: int = 14
 
     def add_subplot(self, rows: int, cols: int, index: int) -> "PlotComposer":
         if index > rows * cols:
@@ -197,6 +205,88 @@ class PlotComposer:
             self.subplots[self.current_subplot].append(layer)
         return self
 
+    def set_labels(
+        self,
+        xlabel: Optional[str] = None,
+        ylabel: Optional[str] = None,
+        title: Optional[str] = None,
+        subplot_idx: Optional[int] = None,
+    ) -> "PlotComposer":
+
+        if subplot_idx is not None:
+            # Convert to 0-based index for internal use
+            idx = subplot_idx - 1
+        else:
+            idx = self.current_subplot
+
+        # Store the labels to apply during rendering
+        if idx not in self._subplot_labels:
+            self._subplot_labels[idx] = {}
+
+        if xlabel is not None:
+            self._subplot_labels[idx]["xlabel"] = xlabel
+        if ylabel is not None:
+            self._subplot_labels[idx]["ylabel"] = ylabel
+        if title is not None:
+            self._subplot_labels[idx]["title"] = title
+
+        return self
+
+    def set_figure_title(self, title: str, fontsize: int = 14) -> "PlotComposer":
+        self.title = title
+        self.title_fontsize = fontsize
+        return self
+
+    def set_ticks(
+        self,
+        show_ticks: bool = True,
+        show_tick_labels: bool = True,
+        x_ticks: Optional[List] = None,
+        y_ticks: Optional[List] = None,
+        x_ticklabels: Optional[List[str]] = None,
+        y_ticklabels: Optional[List[str]] = None,
+        tick_size: int = 10,
+        subplot_idx: Optional[int] = None,
+    ) -> "PlotComposer":
+        # Convert to 0-based indexing internally
+        subplot_idx_internal = (
+            self.current_subplot if subplot_idx is None else subplot_idx - 1
+        )
+
+        # Initialize tick settings dictionary if it doesn't exist
+        if not hasattr(self, "_subplot_ticks"):
+            self._subplot_ticks = {}
+
+        if subplot_idx_internal not in self._subplot_ticks:
+            self._subplot_ticks[subplot_idx_internal] = {}
+
+        # Store tick configuration
+        tick_config = self._subplot_ticks[subplot_idx_internal]
+        tick_config["show_ticks"] = show_ticks
+        tick_config["show_tick_labels"] = show_tick_labels
+        tick_config["x_ticks"] = x_ticks
+        tick_config["y_ticks"] = y_ticks
+        tick_config["x_ticklabels"] = x_ticklabels
+        tick_config["y_ticklabels"] = y_ticklabels
+        tick_config["tick_size"] = tick_size
+
+        return self
+
+    def set_all_ticks(
+        self,
+        show_ticks: bool = False,
+        show_tick_labels: bool = False,
+        tick_size: int = 10,
+    ) -> "PlotComposer":
+        if not hasattr(self, "_global_tick_settings"):
+            self._global_tick_settings = {}
+
+        self._global_tick_settings["show_ticks"] = show_ticks
+        self._global_tick_settings["show_tick_labels"] = show_tick_labels
+        self._global_tick_settings["tick_size"] = tick_size
+
+        return self
+
     def render(self) -> Tuple[plt.Figure, Union[plt.Axes, np.ndarray]]:
         if self.subplots:
             # Create subplot grid
@@ -204,7 +294,7 @@ class PlotComposer:
             self.fig = fig
 
             if self.title:
-                fig.suptitle(self.title)
+                fig.suptitle(self.title, fontsize=self.title_fontsize)
 
             # Handle both single and multiple subplots
             if self.rows * self.cols == 1:
@@ -218,8 +308,57 @@ class PlotComposer:
                     for layer in layers:
                         layer.render(ax)
                     ax.set_aspect("equal")
-                    ax.tick_params(axis="both", which="major", labelsize=10)
-                    ax.tick_params(axis="both", which="minor", labelsize=8)
+
+                    # Apply any labels that were set
+                    if idx in self._subplot_labels:
+                        labels = self._subplot_labels[idx]
+                        if "xlabel" in labels:
+                            ax.set_xlabel(labels["xlabel"])
+                        if "ylabel" in labels:
+                            ax.set_ylabel(labels["ylabel"])
+                        if "title" in labels:
+                            ax.set_title(labels["title"])
+
+                    # Apply tick settings
+                    # First check global settings
+                    show_ticks = self._global_tick_settings.get("show_ticks", True)
+                    show_tick_labels = self._global_tick_settings.get(
+                        "show_tick_labels", True
+                    )
+                    tick_size = self._global_tick_settings.get("tick_size", 10)
+
+                    # Override with subplot-specific settings if they exist
+                    if hasattr(self, "_subplot_ticks") and idx in self._subplot_ticks:
+                        tick_config = self._subplot_ticks[idx]
+                        show_ticks = tick_config.get("show_ticks", show_ticks)
+                        show_tick_labels = tick_config.get(
+                            "show_tick_labels", show_tick_labels
+                        )
+                        tick_size = tick_config.get("tick_size", tick_size)
+
+                        # Apply custom tick positions if provided
+                        if tick_config.get("x_ticks") is not None:
+                            ax.set_xticks(tick_config["x_ticks"])
+                        if tick_config.get("y_ticks") is not None:
+                            ax.set_yticks(tick_config["y_ticks"])
+
+                        # Apply custom tick labels if provided
+                        if tick_config.get("x_ticklabels") is not None:
+                            ax.set_xticklabels(tick_config["x_ticklabels"])
+                        if tick_config.get("y_ticklabels") is not None:
+                            ax.set_yticklabels(tick_config["y_ticklabels"])
+
+                    # Set tick visibility
+                    if not show_ticks:
+                        ax.tick_params(axis="both", which="both", length=0)
+
+                    # Set tick label visibility
+                    if not show_tick_labels:
+                        ax.set_xticklabels([])
+                        ax.set_yticklabels([])
+
+                    # Set tick parameters
+                    ax.tick_params(axis="both", which="major", labelsize=tick_size)
 
             return fig, axes
 
@@ -232,7 +371,7 @@ class PlotComposer:
                 layer.render(ax)
 
             if self.title:
-                ax.set_title(self.title)
+                fig.suptitle(self.title, fontsize=self.title_fontsize)
 
             ax.set_aspect("equal")
             ax.tick_params(axis="both", which="major", labelsize=10)

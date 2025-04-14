@@ -372,6 +372,9 @@ class SliceCollection:
             # Create new subplot for this group
             composer.add_subplot(rows, cols, idx)
 
+            # Set subplot title/labels
+            composer.set_labels(title=group_key, subplot_idx=idx)
+
             # Set view type for all slices in this group
             for slices in type_dict.values():
                 for slice_obj in slices:
@@ -392,6 +395,9 @@ class SliceCollection:
                         composer.add_layer(slice_obj.to_vector_layer(**plot_settings))
                     elif slice_type == SliceType.MASK:
                         composer.add_layer(slice_obj.to_mask_layer(**plot_settings))
+        # Disable ticks and labels for all subplots
+        composer.set_all_ticks(show_ticks=False, show_tick_labels=False)
+
         composer.show()
 
     def print_tree(self, include_details: bool = False) -> None:
