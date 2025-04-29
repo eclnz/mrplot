@@ -2,15 +2,17 @@ import os
 import json
 import nibabel as nib
 import re
-from typing import List, Union, Optional, Tuple
-from mrplot.ood.slice import Slice, SliceCollection
+from typing import List, Union, Optional, Tuple, Dict
+from mrplot.ood.slice import Slice
 from mrplot.ood.print import print_tree
-
+from mrplot.ood.clogging import logger  # Import the logger
+import sys # Import sys module
+import logging
+import pickle
 
 def validate_path(path: str):
     if not os.path.exists(path):
         raise FileNotFoundError(f"Path not found: {path}")
-
 
 class BIDS:
     def __init__(self, path: str):
@@ -61,8 +63,10 @@ class BIDS:
 
                         session.load_scan_types(session_deriv_dir)
                     except Exception as e:
-                        print(
-                            f"Error loading derivatives for {subject.get_name()}/{session.get_name()}: {str(e)}"
+
+                        logger.error(
+                            f"Error loading derivatives for {subject.get_name()}/{session.get_name()}: {str(e)}",
+                            exc_info=True  # Include exception info in the log
                         )
 
     def print_tree(self, include_details: bool = False) -> None:
@@ -94,30 +98,34 @@ class BIDS:
         origin_regex: str,
         required_dims: Optional[int] = None,
         slice_indices: Optional[Tuple[int, int, int]] = None,
-    ) -> SliceCollection:
-        slices = []
+    ) -> Dict[str, Slice]:
+        logger.info(f"Creating slices with scan_regex='{scan_regex}', origin_regex='{origin_regex}'") # Info log
+        slices: Dict[str, Slice] = {}
         for subject in self.subjects:
+            logger.debug(f"Processing subject: {subject.get_name()}") # Debug log
             for session in subject.sessions:
+                logger.debug(f"Processing session: {session.get_name()}") # Debug log
                 for scan in session.scans:
-                    if re.match(scan_regex, scan.scan_name) and re.match(
-                        origin_regex, scan.origin
-                    ):
+                    if re.match(scan_regex, scan.scan_name) and re.match(origin_regex, scan.origin):
+                        logger.debug(f"Found matching scan: {scan.path}") # Debug log
                         if required_dims is not None:
                             if len(scan.shape) != required_dims:
+                                logger.debug(f"Skipping scan {scan.path} due to incorrect dimensions ({len(scan.shape)} != {required_dims})") # Debug log
                                 continue
-                        slice = Slice(
-                            subject_id=subject.get_id(),
-                            session_id=session.get_id(),
-                            scan_id=scan.get_name(),
-                            path=scan.path,
-                            slice_indices=slice_indices,
-                            origin=scan.origin,
-                        )
-                        slice.load_slices()
-                        slices.append(slice)
+                        
+                        logger.debug(f"Loading NIfTI data for: {scan.path}") # Debug log for slow process
+                        data = nib.load(scan.path).get_fdata() # type: ignore
+                        logger.debug(f"Successfully loaded data for: {scan.path}") # Debug log
+                        slice_obj = Slice(slice_indices)
+                        identifier = f"{subject.get_name()}_{session.get_name()}_{scan.get_name()}"
+                        slice_obj.load_slices(data)
+                        slices[identifier] = slice_obj
+                        logger.debug(f"Created and added slice for: {scan.path}") # Debug log
         if not slices:
-            raise ValueError(f"No scans found matching regex '{scan_regex}'")
-        return SliceCollection(slices)
+            # Keep this as a ValueError, as it indicates a potential configuration issue
+            raise ValueError(f"No scans found matching scan_regex='{scan_regex}' and origin_regex='{origin_regex}'")
+        logger.info(f"Created {len(slices)} slices successfully.") # Info log
+        return slices
 
 
 class Subject:
@@ -176,9 +184,11 @@ class Session:
                 try:
                     self.load_scans(scan_type_path)
                 except Exception as e:
-                    print(f"Error loading scans from {scan_type_path}: {str(e)}")
+                    # Use logger.error
+                    logger.error(f"Error loading scans from {scan_type_path}: {str(e)}", exc_info=True)
         except Exception as e:
-            print(f"Error accessing directory {path}: {str(e)}")
+            # Use logger.error
+            logger.error(f"Error accessing directory {path}: {str(e)}", exc_info=True)
 
     def load_scans(self, path: str) -> None:
         if not os.path.exists(path):
@@ -199,15 +209,18 @@ class Session:
                     scan = Scan(scan_path)
                     self.add_scan(scan)
                 except Exception as e:
-                    print(f"Error loading scan {scan_path}: {str(e)}")
+                    # Use logger.error
+                    logger.error(f"Error loading scan {scan_path}: {str(e)}", exc_info=True)
         except Exception as e:
-            print(f"Error listing directory {path}: {str(e)}")
+            # Use logger.error
+            logger.error(f"Error listing directory {path}: {str(e)}", exc_info=True)
 
     def add_scan(self, scan: "Scan") -> None:
         if scan not in self.scans:
             self.scans.append(scan)
         else:
-            print(f"Scan {scan} already exists in {self.get_name()}")
+            # Use logger.warning for non-critical issues
+            logger.warning(f"Scan {scan} already exists in {self.get_name()}")
 
     def get_id(self) -> str:
         return self.session_id
@@ -222,6 +235,7 @@ class Scan:
             raise FileNotFoundError(f"Scan file not found: {path}")
 
         self.path = path
+        logger.debug(f"Initializing Scan object for: {path}") # Debug log
         self.scan_name = self._get_scan_name()
         self.origin = self._get_origin()
         self.shape = self._get_shape()
@@ -229,7 +243,8 @@ class Scan:
         try:
             self.json_sidecar = self._load_json_sidecar()
         except Exception as e:
-            print(f"Warning: Failed to load JSON sidecar for {path}: {str(e)}")
+            # Use logger.warning for non-critical loading issues
+            logger.warning(f"Failed to load JSON sidecar for {path}: {str(e)}", exc_info=True)
             self.json_sidecar = None
 
     def __repr__(self) -> str:
@@ -259,8 +274,12 @@ class Scan:
 
     def _get_shape(self) -> Tuple[int, int, int]:
         try:
-            return nib.load(self.path).shape  # type: ignore
+            logger.debug(f"Attempting to load shape for: {self.path}") # Debug log
+            shape = nib.load(self.path).shape  # type: ignore
+            logger.debug(f"Successfully loaded shape {shape} for: {self.path}") # Debug log
+            return shape
         except Exception as e:
+            logger.error(f"Failed to get shape of {self.path}: {str(e)}", exc_info=True) # Keep error log
             raise RuntimeError(f"Failed to get shape of {self.path}: {str(e)}")
 
     def _load_json_sidecar(self) -> Union[dict, None]:
@@ -279,3 +298,13 @@ class Scan:
 
     def get_name(self) -> str:
         return self.scan_name
+
+
+if __name__ == "__main__":
+
+    logger.setLevel(logging.DEBUG)
+
+    bids = BIDS("/Users/edwardclarkson/git/qaMRI-clone/testData/BIDS4")
+    bids.print_tree()
+    slices = bids.create_slices(scan_regex=".*mask", origin_regex=".*")
+    pickle.dump(slices, open("slices.pkl", "wb"))

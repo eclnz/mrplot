@@ -29,171 +29,43 @@ class SliceRelation:
     target_type: SliceType
     relation_name: str
 
-class CroppedSlice:
-    def __init__(self, slice: "Slice", padding: int = 0):
-        self.slice = slice
-        self.sagittal = slice.sagittal
-        self.coronal = slice.coronal
-        self.axial = slice.axial
-        self.padding = padding
-        self.crop_bounds: Dict[str, Optional[Tuple[Tuple[int, int], Tuple[int, int]]]] = {
-            "sagittal": None,
-            "coronal": None,
-            "axial": None
-        }
-        # Calculate crop bounds for all planes
-        self._calculate_all_crop_bounds()
-
-    def _calculate_all_crop_bounds(self) -> None:
-        """Calculate crop bounds for all three planes."""
-        if self.sagittal is not None:
-            self.crop_bounds["sagittal"] = self.find_single_crop_bounds(self.sagittal, self.padding)
-        
-        if self.coronal is not None:
-            self.crop_bounds["coronal"] = self.find_single_crop_bounds(self.coronal, self.padding)
-            
-        if self.axial is not None:
-            self.crop_bounds["axial"] = self.find_single_crop_bounds(self.axial, self.padding)
-
-    def crop_to_nonzero(self) -> None:
-        """Crop all planes to their respective non-zero regions."""
-        if self.sagittal is None or self.coronal is None or self.axial is None:
-            raise ValueError("Slices must be loaded before cropping.")
-
-        # Crop each plane with its own bounds
-        if self.crop_bounds["sagittal"]:
-            self.sagittal = self._apply_single_crop_bounds(self.sagittal, self.crop_bounds["sagittal"])
-        
-        if self.crop_bounds["coronal"]:
-            self.coronal = self._apply_single_crop_bounds(self.coronal, self.crop_bounds["coronal"])
-            
-        if self.crop_bounds["axial"]:
-            self.axial = self._apply_single_crop_bounds(self.axial, self.crop_bounds["axial"])
-            
-    def find_single_crop_bounds(self, slice_data: np.ndarray, padding: int = 0) -> Tuple[Tuple[int, int], Tuple[int, int]]:
-        bin_data = slice_data > 0
-        
-        if bin_data.ndim > 2:
-            bin_mask = np.any(bin_data[..., :3], axis=-1)
-        else:
-            bin_mask = bin_data
-            
-        # Find row and column indices of non-zero elements
-        rows = np.any(bin_mask, axis=1)
-        cols = np.any(bin_mask, axis=0)
-        
-        # Get bounds with padding
-        row_indices = np.where(rows)[0]
-        col_indices = np.where(cols)[0]
-        
-        if len(row_indices) == 0 or len(col_indices) == 0:
-            # If no non-zero elements, return full bounds
-            return (0, slice_data.shape[0]-1), (0, slice_data.shape[1]-1)
-        
-        # Get min/max indices with padding
-        rmin = max(0, row_indices.min() - padding)
-        rmax = min(bin_mask.shape[0] - 1, row_indices.max() + padding)
-        cmin = max(0, col_indices.min() - padding)
-        cmax = min(bin_mask.shape[1] - 1, col_indices.max() + padding)
-        
-        return (rmin, rmax), (cmin, cmax)
-
-    def _apply_single_crop_bounds(self, slice_data: np.ndarray, bounds: Tuple[Tuple[int, int], Tuple[int, int]]) -> np.ndarray:
-        rmin, rmax = bounds[0]
-        cmin, cmax = bounds[1]
-
-        has_extra_dims = slice_data.ndim > 2
-        
-        if has_extra_dims:
-            return slice_data[rmin:rmax+1, cmin:cmax+1, ...]
-        else:
-            return slice_data[rmin:rmax+1, cmin:cmax+1]
-
-    def apply_crop_bounds(self, crop_bounds: Dict[str, Optional[Tuple[Tuple[int, int], Tuple[int, int]]]]) -> None:
-        if self.sagittal is None or self.coronal is None or self.axial is None:
-            raise ValueError("Slices must be loaded before cropping.")
-        
-        if "sagittal" in crop_bounds and crop_bounds["sagittal"] is not None and self.sagittal is not None:
-            self.sagittal = self._apply_single_crop_bounds(self.sagittal, crop_bounds["sagittal"])
-            
-        if "coronal" in crop_bounds and crop_bounds["coronal"] is not None and self.coronal is not None:
-            self.coronal = self._apply_single_crop_bounds(self.coronal, crop_bounds["coronal"])
-            
-        if "axial" in crop_bounds and crop_bounds["axial"] is not None and self.axial is not None:
-            self.axial = self._apply_single_crop_bounds(self.axial, crop_bounds["axial"])
-        
-    def get_crop_bounds(self, view_type: Optional[str] = None) -> Dict[str, Optional[Tuple[Tuple[int, int], Tuple[int, int]]]]:
-        """Get crop bounds for all planes or a specific plane."""
-        if view_type:
-            if view_type not in self.crop_bounds:
-                raise ValueError(f"Invalid view type: {view_type}. Must be sagittal, coronal, or axial.")
-            return {view_type: self.crop_bounds[view_type]}
-        return self.crop_bounds
-
 
 class Slice:
     def __init__(
         self,
-        subject_id: str,
-        session_id: str,
-        scan_id: str,
-        path: Optional[str] = None,
         slice_indices: Optional[Tuple[int, int, int]] = None,
-        origin: Optional[str] = None,
-        data: Optional[np.ndarray] = None,
     ):
-        self.subject_id = subject_id
-        self.session_id = session_id
-        self.scan_id = scan_id
-        self.path = path
         self.slice_indices = slice_indices
-        self.origin = origin
         self.sagittal = None
         self.coronal = None
         self.axial = None
-        self.current = None
-        self.current_view = "sagittal"
-        
-        # Load slices if data or path is provided
-        if data is not None or path is not None:
-            self.load_slices(slice_indices, data)
 
     def load_slices(
         self,
-        slice_indices: Optional[Tuple[int, int, int]] = None,
-        data: Optional[np.ndarray] = None,
+        data: np.ndarray,
     ):
-        """Load slices from path or data and store them in the slice object."""
-        self.sagittal, self.coronal, self.axial = self._load_slices(slice_indices, data)
-        self.current = self.sagittal
-        self.current_view = "sagittal"
+        self.sagittal, self.coronal, self.axial = self._load_slices(data)
 
     def _load_slices(
         self,
-        slice_indices: Optional[Tuple[int, int, int]] = None,
-        data: Optional[np.ndarray] = None,
+        data: np.ndarray,
     ):
-        if self.path is not None:
-            volume = np.asarray(
-                nib.as_closest_canonical(nib.load(self.path)).dataobj
-            ).astype(np.float32)
-        elif data is not None:
+        if data is not None:
             volume = np.asarray(data).astype(np.float32)
         else:
             raise ValueError("Either path or data must be provided.")
 
-        if slice_indices is None:
-            slice_indices = (
+        if self.slice_indices is None:
+            self.slice_indices = (
                 volume.shape[0] // 2,
                 volume.shape[1] // 2,
                 volume.shape[2] // 2,
             )
-            self.slice_indices = slice_indices
 
         # Create slices - make copies to ensure they persist when volume is deleted
-        sagittal = volume[slice_indices[0], :, :, ...].copy()
-        coronal = volume[:, slice_indices[1], :, ...].copy()
-        axial = volume[:, :, slice_indices[2], ...].copy()
+        sagittal = volume[self.slice_indices[0], :, :, ...].copy()
+        coronal = volume[:, self.slice_indices[1], :, ...].copy()
+        axial = volume[:, :, self.slice_indices[2], ...].copy()
         
         del volume
         gc.collect()
@@ -306,329 +178,63 @@ class Slice:
             threshold=threshold,
         )
 
-
-class SliceCollection:
-    def __init__(self, slices: Optional[List[Slice]] = None):
-        self.slices: List[Slice] = slices if slices is not None else []
-        # Store actual slice objects instead of indices
-        self.groups: Dict[str, Dict[SliceType, Set[Slice]]] = {}
-        # Track relationships between slices
-        self.relations: Dict[Slice, Dict[str, Set[Slice]]] = {}
-
-    def __iter__(self):
-        return iter(self.slices)
-
-    def add_slice(self, slice_obj: Slice, slice_type: SliceType) -> None:
-        self.slices.append(slice_obj)
-
-        # Group by subject/session as base key
-        group_key = f"{slice_obj.subject_id}/{slice_obj.session_id}"
-        if group_key not in self.groups:
-            self.groups[group_key] = {}
-        if slice_type not in self.groups[group_key]:
-            self.groups[group_key][slice_type] = set()
-
-        self.groups[group_key][slice_type].add(slice_obj)
-
-    def add_slices(
-        self, slices: Union[List[Slice], "SliceCollection"], slice_type: SliceType
-    ) -> None:
-        if isinstance(slices, SliceCollection):
-            slices = slices.slices
-
-        # Track which groups we're adding to
-        affected_groups: Dict[str, int] = {}
-
-        for slice_obj in slices:
-            group_key = f"{slice_obj.subject_id}/{slice_obj.session_id}"
-            affected_groups[group_key] = affected_groups.get(group_key, 0) + 1
-
-            # Check if this type already exists in the group
-            if (
-                group_key in self.groups
-                and slice_type in self.groups[group_key]
-                and len(self.groups[group_key][slice_type]) > 0
-            ):
-                print(
-                    f"Warning: Group {group_key} already has slices of type {slice_type.name}"
-                )
-
-            self.add_slice(slice_obj, slice_type)
-
-        # Check for uneven groups
-        for group_key, type_dict in self.groups.items():
-            sizes = {
-                slice_type.name: len(slices) for slice_type, slices in type_dict.items()
-            }
-            if len(set(sizes.values())) > 1:
-                print(f"Warning: Group {group_key} has uneven numbers of slices:")
-                for type_name, size in sizes.items():
-                    print(f"  - {type_name}: {size} slice(s)")
-
-        # Check if any affected groups have different numbers of slices
-        affected_sizes = {group: count for group, count in affected_groups.items()}
-        if len(set(affected_sizes.values())) > 1:
-            print("Warning: Newly added slices have uneven distribution across groups:")
-            for group, count in affected_sizes.items():
-                print(f"  - {group}: {count} slice(s) of type {slice_type.name}")
-
-        # Check if any groups are unaffectd by the addition of slices
-        unaffected_groups = set(self.groups.keys()) - set(affected_groups.keys())
-        if unaffected_groups:
-            print(
-                f"Warning: The following groups were not affected by the addition of {slice_type.name} slices:"
-            )
-            for group in unaffected_groups:
-                print(f"  - {group}")
-
-    def relate_slices(
-        self, source: Slice, target: Slice, relation: SliceRelation
-    ) -> None:
-        if source not in self.relations:
-            self.relations[source] = {}
-        if relation.relation_name not in self.relations[source]:
-            self.relations[source][relation.relation_name] = set()
-
-        self.relations[source][relation.relation_name].add(target)
-
-    def get_related(self, slice_obj: Slice, relation_name: str) -> Set[Slice]:
-        return self.relations.get(slice_obj, {}).get(relation_name, set())
-
-    def find_slices(
-        self,
-        subject_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        slice_type: Optional[SliceType] = None,
-    ) -> Set[Slice]:
-        results = set()
-        for group_key, type_dict in self.groups.items():
-            sub, ses = group_key.split("/")
-            if (subject_id and sub != subject_id) or (session_id and ses != session_id):
-                continue
-            if slice_type:
-                results.update(type_dict.get(slice_type, set()))
-            else:
-                for slices in type_dict.values():
-                    results.update(slices)
-        return results
-
-    def __len__(self) -> int:
-        return len(self.slices)
-
-    def __getitem__(self, index: int) -> Slice:
-        if not 0 <= index < len(self.slices):
-            raise IndexError("Slice index out of range.")
-        return self.slices[index]
-
-    def filter(self, criteria: Dict[str, Any]) -> "SliceCollection":
-        valid_attributes = {
-            "subject_id",
-            "session_id",
-            "scan_id",
-            "path",
-            "slice_indices",
-            "current_view",
+class CroppedSlice(Slice):
+    def __init__(self, slice: "Slice", padding: int = 0):
+        super().__init__(slice.slice_indices, slice.data)
+        self.padding = padding
+        self.crop_bounds: Dict[str, Optional[Tuple[Tuple[int, int], Tuple[int, int]]]] = {
+            "sagittal": None,
+            "coronal": None,
+            "axial": None
         }
-        invalid_keys = set(criteria.keys()) - valid_attributes
-        if invalid_keys:
-            raise ValueError(
-                f"Invalid filter criteria: {invalid_keys}. Valid attributes are: {valid_attributes}"
-            )
+        # Calculate crop bounds for all planes
+        self._calculate_all_crop_bounds()
 
-        filtered_slices = []
-        for slice_obj in self.slices:
-            matches = True
-            for key, value in criteria.items():
-                try:
-                    attr_value = getattr(slice_obj, key)
-                    # Handle regex patterns for string attributes
-                    if isinstance(value, str) and isinstance(attr_value, str):
-                        if not re.match(value, attr_value):
-                            matches = False
-                            break
-                    # Handle exact matches for non-string attributes
-                    elif attr_value != value:
-                        matches = False
-                        break
-                except AttributeError as e:
-                    raise AttributeError(
-                        f"Error accessing attribute '{key}' on slice: {e}"
-                    )
-                except re.error as e:
-                    raise ValueError(f"Invalid regex pattern '{value}' for {key}: {e}")
+    def _calculate_all_crop_bounds(self) -> None:
+        """Calculate crop bounds for all three planes."""
+        if self.sagittal is None or self.coronal is None or self.axial is None:
+            raise ValueError("Slices must be loaded before cropping.")
+        for view_type in ["sagittal", "coronal", "axial"]:
+            self.crop_bounds[view_type] = self.find_single_crop_bounds(self[view_type], self.padding)
 
-            if matches:
-                filtered_slices.append(slice_obj)
+    def crop_to_nonzero(self) -> None:
+        """Crop all planes to their respective non-zero regions."""
+        if self.sagittal is None or self.coronal is None or self.axial is None:
+            raise ValueError("Slices must be loaded before cropping.")
 
-        if not filtered_slices:
-            print(f"Warning: No slices match the filter criteria: {criteria}")
+        # Crop each plane with its own bounds
+        for view_type in ["sagittal", "coronal", "axial"]:
+            if self.crop_bounds[view_type]:
+                self[view_type] = self._apply_single_crop_bounds(self[view_type], self.crop_bounds[view_type])
 
-        return SliceCollection()
+    def _apply_single_crop_bounds(self, slice_data: np.ndarray, bounds: Tuple[Tuple[int, int], Tuple[int, int]]) -> np.ndarray:
+        rmin, rmax = bounds[0]
+        cmin, cmax = bounds[1]
 
-    def set_view_all(self, view_type: str) -> None:
-        """Sets the view for all slices in the collection."""
-        for s in self.slices:
-            s.set_view(view_type)
-
-    def _crop_slice_view(self, slice_obj: Slice, view_type: str, crop_bounds: Optional[Dict[str, Optional[Tuple[Tuple[int, int], Tuple[int, int]]]]] = None) -> None:
+        has_extra_dims = slice_data.ndim > 2
         
-        # Create a CroppedSlice from the original slice
-        cropped_slice = CroppedSlice(slice_obj, self.padding if hasattr(self, "padding") else 0)
-        
-        # Apply custom crop bounds if provided, otherwise use the calculated ones
-        if crop_bounds:
-            cropped_slice.apply_crop_bounds(crop_bounds)
+        if has_extra_dims:
+            return slice_data[rmin:rmax+1, cmin:cmax+1, ...]
         else:
-            cropped_slice.crop_to_nonzero()
+            return slice_data[rmin:rmax+1, cmin:cmax+1]
+
+    def apply_crop_bounds(self, crop_bounds: Dict[str, Optional[Tuple[Tuple[int, int], Tuple[int, int]]]]) -> None:
+        if self.sagittal is None or self.coronal is None or self.axial is None:
+            raise ValueError("Slices must be loaded before cropping.")
         
-        # Update the original slice with the cropped data
-        slice_obj.sagittal = cropped_slice.sagittal
-        slice_obj.coronal = cropped_slice.coronal
-        slice_obj.axial = cropped_slice.axial
+        if "sagittal" in crop_bounds and crop_bounds["sagittal"] is not None and self.sagittal is not None:
+            self.sagittal = self._apply_single_crop_bounds(self.sagittal, crop_bounds["sagittal"])
+            
+        if "coronal" in crop_bounds and crop_bounds["coronal"] is not None and self.coronal is not None:
+            self.coronal = self._apply_single_crop_bounds(self.coronal, crop_bounds["coronal"])
+            
+        if "axial" in crop_bounds and crop_bounds["axial"] is not None and self.axial is not None:
+            self.axial = self._apply_single_crop_bounds(self.axial, crop_bounds["axial"])
         
-        # Update current view
-        if view_type == "sagittal":
-            slice_obj.current = cropped_slice.sagittal
-        elif view_type == "coronal":
-            slice_obj.current = cropped_slice.coronal
-        else:  # axial
-            slice_obj.current = cropped_slice.axial
-
-    def plot(
-        self,
-        view_type: str = "sagittal",
-        plot_kwargs: Optional[Dict[SliceType, Dict[str, Any]]] = None,
-        title: Optional[str] = None,
-        crop_to_type: Optional[SliceType] = None,
-        crop_padding: int = 0,
-    ) -> None:
-        # Set default plotting parameters if none provided
-        default_kwargs: Dict[SliceType, Dict[str, Any]] = {
-            SliceType.MOTION: {"thin_factor": 6, "scale": 50.0},
-            SliceType.T1: {"cmap": "gray", "alpha": 1.0},
-            SliceType.T2: {"cmap": "gray", "alpha": 1.0},
-            SliceType.MASK: {"color": "r", "linewidth": 1.5},
-            SliceType.BOLD: {"cmap": "gray", "alpha": 1.0},
-            SliceType.FIELDMAP: {"cmap": "gray", "alpha": 1.0},
-        }
-        if title is None:
-            title = f"Slice Collection - {view_type} view"
-        composer = PlotComposer(title=title)
-
-        # Update defaults with user-provided kwargs
-        if plot_kwargs:
-            for slice_type, kwargs in plot_kwargs.items():
-                if slice_type in default_kwargs:
-                    default_kwargs[slice_type] = {
-                        **default_kwargs[slice_type],
-                        **kwargs,
-                    }
-
-        # Count number of groups
-        num_groups = len(self.groups)
-        if num_groups == 0:
-            return
-
-        # Calculate grid dimensions
-        cols = min(3, num_groups)  # Maximum 3 columns
-        rows = (num_groups + cols - 1) // cols  # Ceiling division
-
-        # Plot each group in its own subplot
-        for idx, (group_key, type_dict) in enumerate(self.groups.items(), 1):
-            # Create new subplot for this group
-            composer.add_subplot(rows, cols, idx)
-
-            # Set subplot title/labels
-            composer.set_labels(title=group_key, subplot_idx=idx)
-
-            # Set view type for all slices in this group
-            for slices in type_dict.values():
-                for slice_obj in slices:
-                    slice_obj.set_view(view_type)
-                    
-            # Apply cropping if requested
-            if crop_to_type and crop_to_type in type_dict and type_dict[crop_to_type]:
-                # Get reference slice
-                ref_slice = next(iter(type_dict[crop_to_type]))
-                ref_slice.set_view(view_type)
-                
-                # Create a CroppedSlice to get crop bounds for all planes
-                ref_crop_bounds = CroppedSlice(ref_slice, crop_padding).get_crop_bounds()
-                
-                # Apply crop bounds to all slices in the group
-                for s_type, slices in type_dict.items():
-                    for s in slices:
-                        self._crop_slice_view(s, view_type, ref_crop_bounds)
-
-            # Add layers for each slice type in the group
-            for slice_type, slices in type_dict.items():
-                plot_settings = dict(default_kwargs.get(slice_type, {}))
-                for slice_obj in slices:
-                    if slice_type in [
-                        SliceType.T1,
-                        SliceType.T2,
-                        SliceType.BOLD,
-                        SliceType.FIELDMAP,
-                    ]:
-                        composer.add_layer(slice_obj.to_image_layer(**plot_settings))
-                    elif slice_type == SliceType.MOTION:
-                        composer.add_layer(slice_obj.to_vector_layer(**plot_settings))
-                    elif slice_type == SliceType.MASK:
-                        composer.add_layer(slice_obj.to_mask_layer(**plot_settings))
-        # Disable ticks and labels for all subplots
-        composer.set_all_ticks(show_ticks=True, show_tick_labels=True)
-
-        composer.show()
-
-    def print_tree(self, include_details: bool = False) -> None:
-        """Print a visual tree representation of the slice collection structure.
-
-        Args:
-            include_details: If True, include additional details like paths and indices
-        """
-        if not self.slices:
-            print("Empty collection")
-            return
-
-        nodes = []
-
-        if not self.groups:
-            # Untyped collection (from create_slices) - group by subject/session
-            groups: Dict[str, Set[Slice]] = {}
-            for slice_obj in self.slices:
-                key = f"{slice_obj.subject_id}/{slice_obj.session_id}"
-                if key not in groups:
-                    groups[key] = set()
-                groups[key].add(slice_obj)
-
-            # Create the tree structure
-            for group_key, slices in groups.items():
-                nodes.append((0, f"Group: {group_key}"))
-
-                for i, slice_obj in enumerate(sorted(slices, key=lambda x: x.scan_id)):
-                    details = f"Slice: {slice_obj.scan_id}"
-                    if include_details:
-                        if slice_obj.path:
-                            details += f", path: {slice_obj.path}"
-                        if slice_obj.slice_indices:
-                            details += f", indices: {slice_obj.slice_indices}"
-                    nodes.append((1, details))
-        else:
-            # Typed collection (after add_slices)
-            for group_key, type_dict in self.groups.items():
-                nodes.append((0, f"Group: {group_key}"))
-
-                for slice_type, slices in type_dict.items():
-                    nodes.append((1, f"{slice_type.name} ({len(slices)} slices)"))
-
-                    if slices:  # Only proceed if there are slices of this type
-                        for slice_obj in sorted(list(slices), key=lambda x: x.scan_id):
-                            details = f"Slice: {slice_obj.scan_id}"
-                            if include_details:
-                                if slice_obj.path:
-                                    details += f", path: {slice_obj.path}"
-                                if slice_obj.slice_indices:
-                                    details += f", indices: {slice_obj.slice_indices}"
-                            nodes.append((2, details))
-
-        print_tree(nodes)
+    def get_crop_bounds(self, view_type: Optional[str] = None) -> Dict[str, Optional[Tuple[Tuple[int, int], Tuple[int, int]]]]:
+        """Get crop bounds for all planes or a specific plane."""
+        if view_type:
+            if view_type not in self.crop_bounds:
+                raise ValueError(f"Invalid view type: {view_type}. Must be sagittal, coronal, or axial.")
+            return {view_type: self.crop_bounds[view_type]}
+        return self.crop_bounds
