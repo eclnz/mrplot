@@ -28,11 +28,11 @@ def main():
                         help="Regular expression to filter scan names")
     parser.add_argument("--origin-regex", type=str, default=".*", 
                         help="Regular expression to filter scan origins")
-    parser.add_argument("--sagittal-offset", type=float, default=0.0, 
+    parser.add_argument("--sagittal-offset", "-so", type=float, default=0.0, 
                         help="Relative offset in sagittal plane (-0.5 to 0.5, where 0 is center)")
-    parser.add_argument("--coronal-offset", type=float, default=0.0, 
+    parser.add_argument("--coronal-offset", "-co", type=float, default=0.0, 
                         help="Relative offset in coronal plane (-0.5 to 0.5, where 0 is center)")
-    parser.add_argument("--axial-offset", type=float, default=0.0, 
+    parser.add_argument("--axial-offset", "-ao", type=float, default=0.0, 
                         help="Relative offset in axial plane (-0.5 to 0.5, where 0 is center)")
     parser.add_argument("--full-volume", action="store_true", 
                         help="Keep the full volume instead of only selected slices")
