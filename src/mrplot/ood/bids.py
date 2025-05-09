@@ -2,7 +2,9 @@ import os
 import json
 import nibabel as nib
 import re
-from typing import List, Union, Optional, Tuple, Dict
+import numpy as np
+import shutil
+from typing import List, Union, Optional, Tuple, Dict, cast, Any
 from mrplot.ood.slice import Slice
 from mrplot.ood.print import print_tree
 from mrplot.ood.clogging import logger  # Import the logger
@@ -127,6 +129,114 @@ class BIDS:
         logger.info(f"Created {len(slices)} slices successfully.") # Info log
         return slices
 
+    def create_optimized_dataset(
+        self,
+        output_path: str,
+        scan_regex: str = ".*",
+        origin_regex: str = ".*",
+        central_slices_only: bool = True,
+        slice_offsets: Optional[Dict[str, float]] = None,
+    ) -> None:
+        """
+        Creates an optimized version of the BIDS dataset with only specific slices.
+        
+        Args:
+            output_path: Path where the optimized dataset will be saved
+            scan_regex: Regular expression to match scan names
+            origin_regex: Regular expression to match scan origins
+            central_slices_only: If True, use the central slices or offsets in each dimension
+            slice_offsets: Dictionary with relative offsets from center for each plane
+                           e.g., {'sagittal': 0.1, 'coronal': -0.05, 'axial': 0.2}
+                           Values are relative to image dimensions (-0.5 to 0.5),
+                           where 0 is center, -0.5 is start, and 0.5 is end
+        """
+        logger.info(f"Creating optimized dataset at {output_path} with scan_regex='{scan_regex}', origin_regex='{origin_regex}'")
+        
+        if slice_offsets is None:
+            slice_offsets = {'sagittal': 0.0, 'coronal': 0.0, 'axial': 0.0}
+        else:
+            for plane in ['sagittal', 'coronal', 'axial']:
+                if plane not in slice_offsets:
+                    slice_offsets[plane] = 0.0
+                else:
+                    # Validate offset is within valid range (-0.5 to 0.5)
+                    if slice_offsets[plane] < -0.5 or slice_offsets[plane] > 0.5:
+                        logger.warning(f"Offset for {plane} plane is outside valid range (-0.5 to 0.5). Using {max(-0.5, min(0.5, slice_offsets[plane]))}.")
+                        slice_offsets[plane] = max(-0.5, min(0.5, slice_offsets[plane]))
+        
+        logger.info(f"Using slice offsets: sagittal={slice_offsets['sagittal']}, coronal={slice_offsets['coronal']}, axial={slice_offsets['axial']}")
+        
+        if os.path.exists(output_path):
+            logger.warning(f"Output path {output_path} already exists. Files may be overwritten.")
+        else:
+            os.makedirs(output_path, exist_ok=True)
+        
+        for subject in self.subjects:
+            logger.debug(f"Processing subject: {subject.get_name()}")
+            for session in subject.sessions:
+                logger.debug(f"Processing session: {session.get_name()}")
+                for scan in session.scans:
+                    if re.match(scan_regex, scan.scan_name) and re.match(origin_regex, scan.origin):
+                        logger.debug(f"Processing scan: {scan.path}")
+                        
+                        # Load the original NIfTI file
+                        logger.debug(f"Loading NIfTI file: {scan.path}")
+                        nifti_img = cast(nib.Nifti1Image, nib.load(scan.path))
+                        data = nifti_img.get_fdata()
+                        
+                        # Create a new array with zeros
+                        if central_slices_only:
+                            # Create an array of zeros with the same shape as the original
+                            optimized_data = np.zeros_like(data)
+                            
+                            # Calculate slice indices based on offsets
+                            # Convert relative offsets (-0.5 to 0.5) to actual indices
+                            x_idx = int((0.5 + slice_offsets['sagittal']) * (data.shape[0] - 1))
+                            y_idx = int((0.5 + slice_offsets['coronal']) * (data.shape[1] - 1))
+                            z_idx = int((0.5 + slice_offsets['axial']) * (data.shape[2] - 1))
+                            
+                            # Ensure indices are within bounds
+                            x_idx = max(0, min(data.shape[0] - 1, x_idx))
+                            y_idx = max(0, min(data.shape[1] - 1, y_idx))
+                            z_idx = max(0, min(data.shape[2] - 1, z_idx))
+                            
+                            logger.debug(f"Using slices at: sagittal={x_idx}/{data.shape[0]-1}, coronal={y_idx}/{data.shape[1]-1}, axial={z_idx}/{data.shape[2]-1}")
+                            
+                            # Copy only the specified slices
+                            optimized_data[x_idx, :, :] = data[x_idx, :, :]  # Sagittal slice
+                            optimized_data[:, y_idx, :] = data[:, y_idx, :]  # Coronal slice
+                            optimized_data[:, :, z_idx] = data[:, :, z_idx]  # Axial slice
+                        else:
+                            # Use the full data (for testing or comparison)
+                            optimized_data = data
+                        
+                        # Create the optimized NIfTI image with the same header
+                        optimized_img = nib.Nifti1Image(
+                            optimized_data, 
+                            nifti_img.affine, 
+                            nifti_img.header
+                        )
+                        
+                        # Determine the output path structure
+                        # Preserve the original directory structure relative to the BIDS root
+                        rel_path = os.path.relpath(scan.path, self.path)
+                        output_file_path = os.path.join(output_path, rel_path)
+                        
+                        # Create directories if they don't exist
+                        os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
+                        
+                        # Save the optimized image
+                        logger.debug(f"Saving optimized NIfTI to: {output_file_path}")
+                        nib.save(optimized_img, output_file_path)
+                        
+                        # Copy the JSON sidecar if it exists
+                        json_sidecar_path = scan.path.replace(".nii.gz", ".json").replace(".nii", ".json")
+                        if os.path.exists(json_sidecar_path):
+                            output_json_path = output_file_path.replace(".nii.gz", ".json").replace(".nii", ".json")
+                            shutil.copy(json_sidecar_path, output_json_path)
+                            logger.debug(f"Copied JSON sidecar to: {output_json_path}")
+        
+        logger.info(f"Optimized dataset created at: {output_path}")
 
 class Subject:
     def __init__(self, path: str):
@@ -300,11 +410,22 @@ class Scan:
         return self.scan_name
 
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
+#     logger.setLevel(logging.DEBUG)
 
-    logger.setLevel(logging.DEBUG)
-
-    bids = BIDS("/Users/edwardclarkson/git/qaMRI-clone/testData/BIDS4")
-    bids.print_tree()
-    slices = bids.create_slices(scan_regex=".*mask", origin_regex=".*")
-    pickle.dump(slices, open("slices.pkl", "wb"))
+#     bids = BIDS("/Users/edwardclarkson/git/qaMRI-clone/testData/BIDS4")
+#     bids.print_tree()
+    
+#     # Example 2: Create optimized dataset with specific offsets for each plane
+#     # For example, to target lateral ventricles which might be slightly above center in axial view
+#     # and slightly posterior to center in sagittal view
+#     bids.create_optimized_dataset(
+#         output_path="/Users/edwardclarkson/git/qaMRI-clone/testData/BIDS4_optimized_ventricles",
+#         scan_regex=".*",
+#         origin_regex=".*",
+#         slice_offsets={
+#             'sagittal': 0.0,    # Center in sagittal plane (left-right)
+#             'coronal': -0.1,    # Slightly anterior in coronal plane (10% toward front from center)
+#             'axial': 0.15       # Slightly above center in axial plane (15% above center)
+#         }
+#     )

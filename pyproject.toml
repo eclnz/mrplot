@@ -48,3 +48,4 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 mrplot = "mrplot.cli:cli"
+optimize-bids = "mrplot.optimize_bids:main"
