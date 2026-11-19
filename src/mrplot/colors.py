@@ -1,17 +1,20 @@
-"""Immutable RGB color scales with lookup tables prepared at construction."""
+"""Built-in continuous color scales and categorical palette definitions."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 
 import numpy as np
+
+RGB = tuple[int, int, int]
 
 
 @dataclass(frozen=True, slots=True)
 class ColorScale:
     """Evenly spaced RGB stops spanning the intensity window from low to high."""
 
-    stops: tuple[tuple[int, int, int], ...]
+    stops: tuple[RGB, ...]
     palette: bytes = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -37,3 +40,29 @@ HEAT = ColorScale(((0, 0, 0), (255, 0, 0), (255, 255, 0), (255, 255, 255)))
 BLUE_RED = ColorScale(((0, 0, 255), (255, 255, 255), (255, 0, 0)))
 
 COLOR_SCALES = {"gray": GRAY, "heat": HEAT, "blue-red": BLUE_RED}
+
+
+@dataclass(frozen=True, slots=True)
+class CategoricalPalette:
+    """Initial RGB colours and HSV parameters for extending the palette."""
+
+    initial: tuple[RGB, ...]
+    hue_step: float
+    saturation_values: tuple[tuple[float, float], ...]
+
+
+_VIVID_PALETTE = CategoricalPalette(
+    initial=(),
+    hue_step=0.618033988749895,
+    saturation_values=((0.85, 0.95), (0.65, 0.78), (0.95, 0.68)),
+)
+_TABLEAU_PALETTE = replace(_VIVID_PALETTE, initial=(
+    (31, 119, 180), (255, 127, 14), (44, 160, 44), (214, 39, 40), (148, 103, 189),
+    (140, 86, 75), (227, 119, 194), (127, 127, 127), (188, 189, 34), (23, 190, 207),
+))
+
+DEFAULT_CATEGORICAL_SCHEME = "tableau"
+CATEGORICAL_PALETTES = MappingProxyType({
+    DEFAULT_CATEGORICAL_SCHEME: _TABLEAU_PALETTE,
+    "vivid": _VIVID_PALETTE,
+})

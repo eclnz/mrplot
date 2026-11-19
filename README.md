@@ -1,19 +1,16 @@
 # mrplot
 
-Renders orthogonal (axial/coronal/sagittal) plots or videos from a single NIfTI file.
+Render axial, coronal, and sagittal views of NIfTI volumes. A 3D volume produces three PNGs. A 4D volume produces three MP4s.
 
-## Install
+## Quick start
 
-```
+```sh
 uv sync
+uv run mrplot render scan.nii.gz --output-dir out
 ```
 
-## Usage
+Run `uv run mrplot render --help` for CLI options. See the [parcellations and overlays guide](docs/overlays.md) for lookup tables, ROI outlines, image stacking, and Python examples.
 
-```
-mrplot render NIFTI_FILE --output-dir DIR [options]
-```
+## Tests
 
-3D input -> one PNG per plane. 4D input -> one MP4 per plane (one frame per timepoint). 5D and other dimensionalities are rejected.
-
-Output files are named `<input_basename>_<plane>.png` (or `.mp4`), one per plane (`axial`, `coronal`, `sagittal`), written into `--output-dir`. On success, the written file paths are printed to stdout, one per line. On error, a message is printed to stderr and the exit code is non-zero.
+Run `uv run pytest`. The suite generates its own synthetic NIfTI phantoms.

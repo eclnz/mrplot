@@ -108,6 +108,7 @@ _FREE_RAS_AXES = {
     Plane.AXIAL: (0, 1),  # sagittal (R), coronal (A)
 }
 _BOUND_FIELD = ("sagittal", "coronal", "axial")
+CropBox = tuple[int, int, int, int]
 
 
 def _native_axis_and_direction(image: nib.Nifti1Image, ras_axis: int) -> Tuple[int, int]:
@@ -142,6 +143,34 @@ def default_spec(image: nib.Nifti1Image) -> SliceSpec:
     """Middle slice along each axis, no cropping."""
     sagittal, coronal, axial = (_ras_axis_size(image, axis) // 2 for axis in range(3))
     return SliceSpec(indices=(sagittal, coronal, axial))
+
+
+def _display_crop_box(plane: Plane, visible: CropBounds, expanded: CropBounds) -> CropBox:
+    horizontal, vertical = (_BOUND_FIELD[axis] for axis in _FREE_RAS_AXES[plane])
+    shown_x, shown_y = getattr(visible, horizontal), getattr(visible, vertical)
+    full_x, full_y = getattr(expanded, horizontal), getattr(expanded, vertical)
+    # Display coordinates run from the high to the low end of both free RAS axes.
+    return (
+        full_x.end - shown_x.end, full_y.end - shown_y.end,
+        full_x.end - shown_x.start + 1, full_y.end - shown_y.start + 1,
+    )
+
+
+def expand_slice_crop(
+    image: nib.Nifti1Image, spec: SliceSpec,
+) -> tuple[SliceSpec, dict[Plane, CropBox]]:
+    """Read one neighbouring voxel past the crop and locate the viewport in each plane."""
+    if spec.crop_bounds is None:
+        return spec, {}
+    expanded = []
+    for axis, field in enumerate(_BOUND_FIELD):
+        bounds = getattr(spec.crop_bounds, field)
+        start = max(0, bounds.start - 1)
+        end = min(_ras_axis_size(image, axis) - 1, bounds.end + 1)
+        expanded.append(AxisBounds(start, end))
+    expanded_bounds = CropBounds(*expanded)
+    boxes = {plane: _display_crop_box(plane, spec.crop_bounds, expanded_bounds) for plane in Plane}
+    return SliceSpec(spec.indices, expanded_bounds), boxes
 
 
 def find_crop_bounds(
@@ -293,11 +322,20 @@ def _broadcastable(mask: NDArray[Any], like: NDArray[Any]) -> NDArray[Any]:
     return mask
 
 
-def apply_mask_to_triplet(triplet: SliceTriplet, mask_triplet: SliceTriplet) -> SliceTriplet:
-    """Zero out voxels outside the mask, then recompute intensity bounds."""
-    axial = triplet.axial * _broadcastable(mask_triplet.axial > 0, triplet.axial)
-    coronal = triplet.coronal * _broadcastable(mask_triplet.coronal > 0, triplet.coronal)
-    sagittal = triplet.sagittal * _broadcastable(mask_triplet.sagittal > 0, triplet.sagittal)
+def apply_mask_to_triplet(
+    triplet: SliceTriplet, mask_triplet: SliceTriplet, *, background_label: int | None = None,
+) -> SliceTriplet:
+    """Mask voxels outside the selected area and recompute intensity bounds."""
+    def masked(array: NDArray[Any], mask: NDArray[Any]) -> NDArray[Any]:
+        include = _broadcastable(mask > 0, array)
+        if background_label is None:
+            return np.asarray(array * include)
+        # A background such as -1 need not fit the NIfTI label's storage type.
+        return np.where(include, array, np.asarray(background_label, dtype=object))
+
+    axial = masked(triplet.axial, mask_triplet.axial)
+    coronal = masked(triplet.coronal, mask_triplet.coronal)
+    sagittal = masked(triplet.sagittal, mask_triplet.sagittal)
     intensity_bounds = (
         float(min(axial.min(), coronal.min(), sagittal.min())),
         float(max(axial.max(), coronal.max(), sagittal.max())),
@@ -323,10 +361,21 @@ def prepare_slices(
     config: SliceConfig = SliceConfig(),
 ) -> SliceTriplet:
     """Extract centered slices, optionally using a mask for selection and cropping."""
+    return prepare_slices_with_spec(image, mask_image=mask_image, config=config)[0]
+
+
+def prepare_slices_with_spec(
+    image: nib.Nifti1Image,
+    *,
+    mask_image: Optional[nib.Nifti1Image] = None,
+    config: SliceConfig = SliceConfig(),
+    background_label: int | None = None,
+) -> tuple[SliceTriplet, SliceSpec]:
+    """Prepare slices and retain the selection for an image on the same grid."""
     if mask_image is None:
         if config.crop:
             raise ValueError("Cropping requires a mask.")
-        return extract_slice_triplet(image)[0]
+        return extract_slice_triplet(image)
 
     if mask_image.shape[:3] != image.shape[:3]:
         raise ValueError(
@@ -336,5 +385,5 @@ def prepare_slices(
     triplet, _ = extract_slice_triplet(image, spec)
     if config.crop:
         mask_triplet, _ = extract_slice_triplet(mask_image, spec)
-        return apply_mask_to_triplet(triplet, mask_triplet)
-    return triplet
+        triplet = apply_mask_to_triplet(triplet, mask_triplet, background_label=background_label)
+    return triplet, spec
