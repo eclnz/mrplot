@@ -1,7 +1,8 @@
-"""Prepare layouts and render intensity slices to RGB image frames."""
+"""Prepare layouts and render intensity or label slices to RGB image frames."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from math import isfinite
@@ -11,6 +12,7 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image, ImageDraw, ImageFont, ImagePalette
 
+from mrplot.categorical import CategoricalColors, LabelColors
 from mrplot.colors import GRAY, ColorScale
 from mrplot.slicing import SliceConfig
 
@@ -35,6 +37,18 @@ def validate_intensity_window(
     if minimum is not None and maximum is not None:
         if minimum > maximum or (minimum == maximum and not allow_equal):
             raise ValueError("Minimum intensity must be less than maximum intensity.")
+
+
+def resolve_intensity_window(
+    data_bounds: tuple[float, float], minimum: float | None, maximum: float | None,
+) -> tuple[float, float]:
+    bounds = (
+        data_bounds[0] if minimum is None else minimum,
+        data_bounds[1] if maximum is None else maximum,
+    )
+    validate_intensity_window(*bounds, allow_equal=minimum is None and maximum is None)
+    return bounds
+
 
 @dataclass(frozen=True, slots=True)
 class RenderConfig:
@@ -62,10 +76,15 @@ class RenderConfig:
     fps: int = 10
     intensity_min: float | None = None
     intensity_max: float | None = None
+    parcellation: CategoricalColors | None = None
 
     def __post_init__(self) -> None:
         if self.fps <= 0:
             raise ValueError("Frames per second must be positive.")
+        if self.parcellation is not None and (
+            self.show_colorbar or self.intensity_min is not None or self.intensity_max is not None
+        ):
+            raise ValueError("The intensity window and colorbar require continuous-intensity rendering.")
         validate_intensity_window(self.intensity_min, self.intensity_max)
         positive_dimensions = (
             ("font_size", self.font_size),
@@ -118,6 +137,7 @@ class FrameLayout:
     spacing: Tuple[float, float]
     intensity_bounds: Tuple[float, float]
     resources: RenderResources
+    label_colors: LabelColors | None = None
     output_size: Tuple[int, int] = field(init=False)
     colorbar: Optional[Image.Image] = field(init=False)
 
@@ -153,7 +173,7 @@ def calculate_output_size(
     width_px = int((width_px + alignment - 1) // alignment * alignment)
     height_px = int((height_px + alignment - 1) // alignment * alignment)
 
-    return width_px, height_px
+    return max(alignment, width_px), max(alignment, height_px)
 
 
 def _to_intensity_indices(slice_2d: NDArray[Any], intensity_bounds: Tuple[float, float]) -> NDArray[np.uint8]:
@@ -269,20 +289,87 @@ def load_render_resources(config: RenderConfig) -> RenderResources:
     )
 
 
+def _region_edges(pixels: NDArray[np.int32]) -> NDArray[np.bool_]:
+    """Draw the inside pixel of each four-connected border at display resolution."""
+    edge = np.zeros(pixels.shape, dtype=bool)
+    edge[0, :] = edge[-1, :] = edge[:, 0] = edge[:, -1] = True
+    horizontal = pixels[:, :-1] != pixels[:, 1:]
+    vertical = pixels[:-1, :] != pixels[1:, :]
+    edge[:, :-1] |= horizontal
+    edge[:, 1:] |= horizontal
+    edge[:-1, :] |= vertical
+    edge[1:, :] |= vertical
+    edge &= pixels != 0
+    return edge
+
+
+def _with_alpha(image: Image.Image, alpha: NDArray[np.uint8]) -> Image.Image:
+    image.putalpha(Image.fromarray(alpha))
+    return image
+
+
+def prepare_label_layer(
+    labels: NDArray[Any], output_size: tuple[int, int], *, colors: LabelColors,
+    fill_opacity: float, line_opacity: float,
+) -> Image.Image:
+    indices = Image.fromarray(colors.encode(labels)).resize(output_size, Image.Resampling.NEAREST)
+    pixels = np.asarray(indices)
+    alpha = np.where(pixels != 0, np.uint8(round(fill_opacity * 255)), np.uint8(0))
+    if line_opacity:
+        # The fill and the line use the same colour. Combine their alpha at the border.
+        edge_opacity = fill_opacity + line_opacity * (1 - fill_opacity)
+        alpha[_region_edges(pixels)] = round(edge_opacity * 255)
+    return _with_alpha(Image.fromarray(colors.palette((0, 0, 0))[pixels]), alpha)
+
+
+def prepare_image_layer(
+    data: NDArray[Any], output_size: tuple[int, int], *, color_scale: ColorScale,
+    bounds: tuple[float, float], opacity: float, interpolation: Interpolation,
+) -> Image.Image:
+    visible = np.isfinite(data) & (data != 0)
+    low, high = bounds
+    values = np.where(visible, data, low)
+    indices = (
+        np.full(data.shape, 255, dtype=np.uint8) if low == high else _to_intensity_indices(values, bounds)
+    )
+    palette = ImagePalette.ImagePalette(mode="RGB", palette=color_scale.palette)
+    rgb = _apply_color_scale(indices, palette)
+    alpha = np.where(visible, np.uint8(round(opacity * 255)), np.uint8(0))
+    return _with_alpha(rgb, alpha).resize(output_size, resample=_PIL_RESAMPLE[interpolation])
+
+
+def prepare_outline(
+    labels: NDArray[Any], colors: LabelColors, output_size: tuple[int, int],
+) -> Image.Image:
+    """Prepare the fully opaque outline of a categorical slice."""
+    return prepare_label_layer(labels, output_size, colors=colors, fill_opacity=0, line_opacity=1)
+
+
 def render_prepared_frame(
     slice_2d: NDArray[Any],
     layout: FrameLayout,
     title: str,
     crosshair: Optional[Tuple[int, int]] = None,
+    *,
+    outline: Image.Image | None = None,
+    overlays: Sequence[Image.Image] = (),
 ) -> NDArray[np.uint8]:
     """Render a frame using a prepared layout, returning an independently owned array."""
     if slice_2d.shape != layout.source_shape:
         raise ValueError("Slice shape does not match the prepared frame layout.")
     config, resample, font, palette = layout.resources
-    image = _apply_color_scale(
-        _to_intensity_indices(slice_2d, layout.intensity_bounds), palette,
-    )
+    if layout.label_colors is None:
+        image = _apply_color_scale(
+            _to_intensity_indices(slice_2d, layout.intensity_bounds), palette,
+        )
+    else:
+        colors = layout.label_colors
+        image = Image.fromarray(colors.palette(config.background_color)[colors.encode(slice_2d)])
+        resample = Image.Resampling.NEAREST
     image = image.resize(layout.output_size, resample=resample)
+    layers = overlays if outline is None else (*overlays, outline)
+    for layer in layers:
+        image.paste(layer, mask=layer)
     draw = ImageDraw.Draw(image)
     if crosshair is not None:
         _draw_crosshair(draw, crosshair, layout.source_shape, layout.output_size, config)
@@ -301,7 +388,7 @@ def render_image_frame(
     title: str,
     crosshair: Optional[Tuple[int, int]] = None,
 ) -> NDArray[np.uint8]:
-    """Prepare and render one 2D intensity slice to an RGB image array with a title."""
+    """Render one 2D slice, resolving automatic categorical colours from that slice."""
     if slice_2d.ndim != 2:
         raise ValueError("Frame rendering requires a 2D slice.")
     source_shape = (slice_2d.shape[0], slice_2d.shape[1])
@@ -310,5 +397,6 @@ def render_image_frame(
         spacing=spacing,
         intensity_bounds=intensity_bounds,
         resources=load_render_resources(config),
+        label_colors=config.parcellation.resolve(slice_2d) if config.parcellation is not None else None,
     )
     return render_prepared_frame(slice_2d, layout, title, crosshair=crosshair)
