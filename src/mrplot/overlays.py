@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from functools import partial
 from itertools import repeat
 from typing import Any
 
@@ -23,7 +22,7 @@ from mrplot.rendering import (
     resolve_intensity_window,
     validate_intensity_window,
 )
-from mrplot.slicing import Plane, SliceSpec, SliceTriplet, extract_slice_triplet
+from mrplot.slicing import Plane, SliceSpec, SliceTriplet, expand_slice_crop, extract_slice_triplet
 from mrplot.volumes import align_overlay_volume, load_volume
 
 _MAX_OUTLINE_VALUES = 500
@@ -66,13 +65,13 @@ class LabelOverlay:
 @dataclass(frozen=True, slots=True)
 class PreparedOverlay:
     slices: SliceTriplet
-    render: Callable[[NDArray[Any], tuple[int, int]], Image.Image]
+    render: Callable[[NDArray[Any], tuple[int, int], Plane], Image.Image]
 
     def frames_for(self, plane: Plane, size: tuple[int, int]) -> Iterator[Image.Image]:
         data: NDArray[Any] = getattr(self.slices, plane.value)
         if data.ndim == 2:
-            return repeat(self.render(data, size))
-        return (self.render(data[..., frame], size) for frame in range(data.shape[-1]))
+            return repeat(self.render(data, size, plane))
+        return (self.render(data[..., frame], size, plane) for frame in range(data.shape[-1]))
 
 
 def _finite_bounds(triplet: SliceTriplet) -> tuple[float, float]:
@@ -98,16 +97,26 @@ def prepare_overlay(
         colors = layer.colors.resolve(
             np.asanyarray(volume.dataobj), name=name, max_values=_MAX_OUTLINE_VALUES,
         )
-        slices, _ = extract_slice_triplet(volume, spec)
-        return PreparedOverlay(slices, partial(
-            prepare_label_layer, colors=colors, fill_opacity=layer.fill_opacity, line_opacity=layer.line_opacity,
-        ))
+        expanded, boxes = expand_slice_crop(volume, spec) if layer.line_opacity else (spec, {})
+        slices, _ = extract_slice_triplet(volume, expanded)
+
+        def render_labels(data: NDArray[Any], size: tuple[int, int], plane: Plane) -> Image.Image:
+            return prepare_label_layer(
+                data, size, colors=colors, fill_opacity=layer.fill_opacity,
+                line_opacity=layer.line_opacity, crop=boxes.get(plane),
+            )
+
+        return PreparedOverlay(slices, render_labels)
 
     if volume.get_data_dtype().kind not in "buif":  # type: ignore[no-untyped-call]
         raise ValueError(f"{name} must contain real-valued voxels.")
     slices, _ = extract_slice_triplet(volume, spec)
     bounds = resolve_intensity_window(_finite_bounds(slices), layer.intensity_min, layer.intensity_max)
-    return PreparedOverlay(slices, partial(
-        prepare_image_layer, color_scale=layer.color_scale, bounds=bounds,
-        opacity=layer.opacity, interpolation=interpolation,
-    ))
+
+    def render_image(data: NDArray[Any], size: tuple[int, int], _plane: Plane) -> Image.Image:
+        return prepare_image_layer(
+            data, size, color_scale=layer.color_scale, bounds=bounds,
+            opacity=layer.opacity, interpolation=interpolation,
+        )
+
+    return PreparedOverlay(slices, render_image)

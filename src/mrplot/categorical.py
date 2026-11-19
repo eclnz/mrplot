@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from colorsys import hsv_to_rgb
 from dataclasses import dataclass
 from itertools import cycle
@@ -26,25 +26,71 @@ def _parse_hex(value: str) -> RGB:
     return int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16)
 
 
-def _lookup_hex(fields: list[str]) -> str:
-    """Read hex, FreeSurfer (name then byte RGBA), or FSLeyes (unit RGB then name)."""
-    if len(fields) == 1:
-        _parse_hex(fields[0])
-        return fields[0]
-    if len(fields) >= 5 and all(re.fullmatch(r"[0-9]+", field) for field in fields[-4:]):
-        red, green, blue, alpha = (int(field) for field in fields[-4:])
-        if max(red, green, blue, alpha) > 255:
-            raise ValueError("FreeSurfer LUT channels must be between 0 and 255.")
-        return f"#{red:02X}{green:02X}{blue:02X}"
+_INTEGER = re.compile(r"[+-]?[0-9]+")
+_LookupParser = Callable[[list[str]], str]
+
+
+def _hex_lookup_color(fields: list[str]) -> str:
+    if len(fields) != 1:
+        raise ValueError("Expected one #RRGGBB colour per label.")
+    _parse_hex(fields[0])
+    return fields[0]
+
+
+def _has_freesurfer_channels(fields: list[str]) -> bool:
+    return len(fields) >= 5 and all(_INTEGER.fullmatch(field) for field in fields[-4:])
+
+
+def _freesurfer_lookup_color(fields: list[str]) -> str:
+    if not _has_freesurfer_channels(fields):
+        raise ValueError("Expected a FreeSurfer label name followed by R G B A channels.")
+    rgba = [int(field) for field in fields[-4:]]
+    if not all(0 <= channel <= 255 for channel in rgba):
+        raise ValueError("FreeSurfer LUT channels must be between 0 and 255.")
+    return "#" + "".join(f"{channel:02X}" for channel in rgba[:3])
+
+
+def _fsleyes_channels(fields: list[str]) -> list[float]:
     if len(fields) >= 4:
         try:
-            rgb = [float(field) for field in fields[:3]]
-        except ValueError as error:
-            raise ValueError("Expected a FreeSurfer or FSLeyes LUT row.") from error
-        if not all(0 <= channel <= 1 for channel in rgb):
-            raise ValueError("FSLeyes LUT channels must be between 0 and 1.")
-        return "#" + "".join(f"{round(channel * 255):02X}" for channel in rgb)
-    raise ValueError("Expected a hex colour, a FreeSurfer LUT row, or an FSLeyes LUT row.")
+            return [float(field) for field in fields[:3]]
+        except ValueError:
+            pass
+    raise ValueError("Expected FSLeyes R G B channels followed by a label name.")
+
+
+def _fsleyes_lookup_color(fields: list[str]) -> str:
+    rgb = _fsleyes_channels(fields)
+    if not all(0 <= channel <= 1 for channel in rgb):
+        raise ValueError("FSLeyes LUT channels must be between 0 and 1.")
+    return "#" + "".join(f"{round(channel * 255):02X}" for channel in rgb)
+
+
+def _lookup_candidates(fields: list[str]) -> set[_LookupParser]:
+    if len(fields) == 1:
+        return {_hex_lookup_color}
+    parsers: set[_LookupParser] = set()
+    if _has_freesurfer_channels(fields):
+        parsers.add(_freesurfer_lookup_color)
+    try:
+        _fsleyes_channels(fields)
+    except ValueError:
+        return parsers
+    parsers.add(_fsleyes_lookup_color)
+    return parsers
+
+
+def _select_lookup_parser(path: Path, rows: list[tuple[int, list[str]]]) -> _LookupParser:
+    """Select one grammar per file, using the FSLeyes suffix to break a tie."""
+    for number, fields in rows:
+        candidates = _lookup_candidates(fields[1:])
+        if not candidates:
+            raise ValueError(f"{path}, line {number}: expected a hex, FreeSurfer, or FSLeyes lookup row.")
+        if len(candidates) == 1:
+            return next(iter(candidates))
+    if path.suffix.lower() == ".lut" or not rows:
+        return _fsleyes_lookup_color
+    raise ValueError(f"{path}: ambiguous lookup table format. Use .lut for FSLeyes or LABEL #RRGGBB rows.")
 
 
 def _unused_rgb(color: RGB, seen: set[RGB]) -> RGB:
@@ -118,18 +164,22 @@ class CategoricalColors:
         cls, path: str | os.PathLike[str], *, background_label: int = 0,
     ) -> CategoricalColors:
         """Read a LABEL #RRGGBB, FreeSurfer, or FSLeyes lookup table."""
+        table = Path(path)
+        rows = [
+            (number, line.split())
+            for number, line in enumerate(table.read_text(encoding="utf-8").splitlines(), 1)
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        parse_color = _select_lookup_parser(table, rows)
         mapping = {}
-        for number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            label, *fields = line.split()
-            if re.fullmatch(r"[+-]?[0-9]+", label) is None:
+        for number, (label, *fields) in rows:
+            if _INTEGER.fullmatch(label) is None:
                 raise ValueError(f"{path}, line {number}: expected an integer label.")
             key = int(label)
             if key in mapping:
                 raise ValueError(f"{path}, line {number}: duplicate label {key}.")
             try:
-                mapping[key] = _lookup_hex(fields)
+                mapping[key] = parse_color(fields)
             except ValueError as error:
                 raise ValueError(f"{path}, line {number}: {error}") from error
         return cls(background_label=background_label, mapping=mapping)

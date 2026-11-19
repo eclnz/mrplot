@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont, ImagePalette
 
 from mrplot.categorical import CategoricalColors, LabelColors
 from mrplot.colors import GRAY, ColorScale
-from mrplot.slicing import SliceConfig
+from mrplot.slicing import CropBox, SliceConfig
 
 
 class Interpolation(Enum):
@@ -289,18 +289,32 @@ def load_render_resources(config: RenderConfig) -> RenderResources:
     )
 
 
-def _region_edges(pixels: NDArray[np.int32]) -> NDArray[np.bool_]:
-    """Draw the inside pixel of each four-connected border at display resolution."""
-    edge = np.zeros(pixels.shape, dtype=bool)
-    edge[0, :] = edge[-1, :] = edge[:, 0] = edge[:, -1] = True
-    horizontal = pixels[:, :-1] != pixels[:, 1:]
-    vertical = pixels[:-1, :] != pixels[1:, :]
-    edge[:, :-1] |= horizontal
-    edge[:, 1:] |= horizontal
-    edge[:-1, :] |= vertical
-    edge[1:, :] |= vertical
-    edge &= pixels != 0
-    return edge
+def _sample_label_axis(start: int, stop: int, output_length: int) -> NDArray[np.intp]:
+    indices = Image.fromarray(np.arange(start, stop, dtype=np.int32)[None, :])
+    resized = indices.resize((output_length, 1), resample=Image.Resampling.NEAREST)
+    # Offset for the extra background pixel outside the image itself.
+    return np.concatenate(([start - 1], np.asarray(resized).ravel(), [stop])).astype(np.intp) + 1
+
+
+def _label_neighbourhood(
+    indices: NDArray[np.int32], output_size: tuple[int, int], crop: CropBox | None,
+) -> NDArray[np.int32]:
+    """Sample the viewport and keep one adjacent label at each edge."""
+    height, width = indices.shape
+    left, top, right, bottom = crop if crop is not None else (0, 0, width, height)
+    columns = _sample_label_axis(left, right, output_size[0])
+    rows = _sample_label_axis(top, bottom, output_size[1])
+    return np.pad(indices, 1)[np.ix_(rows, columns)]
+
+
+def _region_edges(neighbours: NDArray[np.int32]) -> NDArray[np.bool_]:
+    """Find the inner pixel of each four-connected border in the viewport."""
+    pixels = neighbours[1:-1, 1:-1]
+    edge = (pixels != 0) & (
+        (pixels != neighbours[:-2, 1:-1]) | (pixels != neighbours[2:, 1:-1])
+        | (pixels != neighbours[1:-1, :-2]) | (pixels != neighbours[1:-1, 2:])
+    )
+    return np.asarray(edge, dtype=np.bool_)
 
 
 def _with_alpha(image: Image.Image, alpha: NDArray[np.uint8]) -> Image.Image:
@@ -310,15 +324,15 @@ def _with_alpha(image: Image.Image, alpha: NDArray[np.uint8]) -> Image.Image:
 
 def prepare_label_layer(
     labels: NDArray[Any], output_size: tuple[int, int], *, colors: LabelColors,
-    fill_opacity: float, line_opacity: float,
+    fill_opacity: float, line_opacity: float, crop: CropBox | None = None,
 ) -> Image.Image:
-    indices = Image.fromarray(colors.encode(labels)).resize(output_size, Image.Resampling.NEAREST)
-    pixels = np.asarray(indices)
+    neighbours = _label_neighbourhood(colors.encode(labels), output_size, crop)
+    pixels = neighbours[1:-1, 1:-1]
     alpha = np.where(pixels != 0, np.uint8(round(fill_opacity * 255)), np.uint8(0))
     if line_opacity:
         # The fill and the line use the same colour. Combine their alpha at the border.
         edge_opacity = fill_opacity + line_opacity * (1 - fill_opacity)
-        alpha[_region_edges(pixels)] = round(edge_opacity * 255)
+        alpha[_region_edges(neighbours)] = round(edge_opacity * 255)
     return _with_alpha(Image.fromarray(colors.palette((0, 0, 0))[pixels]), alpha)
 
 

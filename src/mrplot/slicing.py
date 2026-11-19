@@ -108,6 +108,7 @@ _FREE_RAS_AXES = {
     Plane.AXIAL: (0, 1),  # sagittal (R), coronal (A)
 }
 _BOUND_FIELD = ("sagittal", "coronal", "axial")
+CropBox = tuple[int, int, int, int]
 
 
 def _native_axis_and_direction(image: nib.Nifti1Image, ras_axis: int) -> Tuple[int, int]:
@@ -142,6 +143,34 @@ def default_spec(image: nib.Nifti1Image) -> SliceSpec:
     """Middle slice along each axis, no cropping."""
     sagittal, coronal, axial = (_ras_axis_size(image, axis) // 2 for axis in range(3))
     return SliceSpec(indices=(sagittal, coronal, axial))
+
+
+def _display_crop_box(plane: Plane, visible: CropBounds, expanded: CropBounds) -> CropBox:
+    horizontal, vertical = (_BOUND_FIELD[axis] for axis in _FREE_RAS_AXES[plane])
+    shown_x, shown_y = getattr(visible, horizontal), getattr(visible, vertical)
+    full_x, full_y = getattr(expanded, horizontal), getattr(expanded, vertical)
+    # Display coordinates run from the high to the low end of both free RAS axes.
+    return (
+        full_x.end - shown_x.end, full_y.end - shown_y.end,
+        full_x.end - shown_x.start + 1, full_y.end - shown_y.start + 1,
+    )
+
+
+def expand_slice_crop(
+    image: nib.Nifti1Image, spec: SliceSpec,
+) -> tuple[SliceSpec, dict[Plane, CropBox]]:
+    """Read one neighbouring voxel past the crop and locate the viewport in each plane."""
+    if spec.crop_bounds is None:
+        return spec, {}
+    expanded = []
+    for axis, field in enumerate(_BOUND_FIELD):
+        bounds = getattr(spec.crop_bounds, field)
+        start = max(0, bounds.start - 1)
+        end = min(_ras_axis_size(image, axis) - 1, bounds.end + 1)
+        expanded.append(AxisBounds(start, end))
+    expanded_bounds = CropBounds(*expanded)
+    boxes = {plane: _display_crop_box(plane, spec.crop_bounds, expanded_bounds) for plane in Plane}
+    return SliceSpec(spec.indices, expanded_bounds), boxes
 
 
 def find_crop_bounds(

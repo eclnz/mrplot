@@ -91,6 +91,17 @@ def test_native_and_hex_lookup_tables_via_cli(tmp_path, table):
     assert _rgb_at(out / "parcels_axial.png", 0, 100) == (205, 62, 78)
 
 
+@pytest.mark.parametrize(
+    ("name", "additional_rows"),
+    [("atlas.lut", ""), ("atlas.txt", "7 0.5 0 1 Other area\n")],
+)
+def test_fsleyes_lookup_preserves_names_ending_in_numeric_tokens(tmp_path, name, additional_rows):
+    table = tmp_path / name
+    table.write_text("12 1 0 0 Area 1 2 3 4\n" + additional_rows)
+    colors = CategoricalColors.from_lookup_table(table).resolve(np.array([12]))
+    assert colors.foreground == ((255, 0, 0),)
+
+
 def test_unknown_label_in_unshown_voxel_rejects_explicit_table(tmp_path):
     labels = np.zeros((8, 8, 8), dtype=np.int16)
     labels[0, 0, 0] = 42
@@ -147,6 +158,44 @@ def test_outline_respects_grid_and_mask_slice_selection(tmp_path):
         with Image.open(expected_path) as expected, Image.open(actual_path) as image:
             np.testing.assert_array_equal(image, expected)
             assert np.any(np.all(np.asarray(image) == (255, 136, 0), axis=-1))
+
+
+def test_crop_inside_single_parcel_does_not_draw_a_frame(tmp_path):
+    labels = np.zeros((24, 24, 24), dtype=np.uint8)
+    labels[3:21, 3:21, 3:21] = 1
+    crop = np.zeros_like(labels)
+    crop[7:17, 8:18, 9:19] = 1
+    anatomy = save_phantom(tmp_path, "base", np.ones_like(labels))
+    outline = save_phantom(tmp_path, "parcels", labels)
+    mask = save_phantom(tmp_path, "crop", crop)
+    config = RenderConfig(max_fig_size=96, slicing=SliceConfig(crop=True, padding=0))
+
+    plain = render_file(anatomy, tmp_path / "plain", config=config, mask_path=mask)
+    outlined = render_file(anatomy, tmp_path / "outlined", config=config, mask_path=mask, outline_path=outline)
+    for original, overlaid in zip(plain, outlined, strict=True):
+        with Image.open(original) as expected, Image.open(overlaid) as actual:
+            np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize(("start", "stop", "column"), [(7, 17, 0), (0, 10, 95)])
+def test_roi_boundary_at_crop_edge_remains_visible(tmp_path, start, stop, column):
+    labels = np.ones((24, 24, 24), dtype=np.uint8)
+    labels[17:] = 2
+    crop = np.zeros_like(labels)
+    crop[start:stop, 8:18, 9:19] = 1
+    anatomy = save_phantom(tmp_path, "base", np.zeros_like(labels))
+    outline = save_phantom(tmp_path, "labels", labels)
+    mask = save_phantom(tmp_path, "crop", crop)
+    config = RenderConfig(max_fig_size=96, slicing=SliceConfig(crop=True, padding=0))
+    colors = CategoricalColors(mapping={1: "#FF8800", 2: "#0000FF"})
+
+    _, coronal, axial = render_file(
+        anatomy, tmp_path / "out", config=config, mask_path=mask,
+        outline_path=outline, outline_colors=colors,
+    )
+    for path in (coronal, axial):
+        assert _rgb_at(path, column, 48) == (255, 136, 0)
+        assert _rgb_at(path, 95 - column, 48) == (0, 0, 0)
 
 
 def test_crop_uses_configured_parcellation_background(tmp_path):

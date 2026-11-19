@@ -15,7 +15,7 @@ mrplot render aparc+aseg.nii.gz --output-dir out \
 
 Use `--outline` on a continuous scan or a parcellation. The outline image must contain finite integer labels on the same spatial voxel grid as the base. Equivalent axis flips and permutations are handled automatically. A 3D overlay can be reused across a 4D scan, and a 4D overlay must have the same number of frames as the base. The 500-value limit counts every distinct label in the outline image, including background if present. The background label defaults to `0` and can be selected with `--outline-background LABEL`.
 
-Outlines follow the inside edge of each displayed region, including both sides of shared borders. Background has no outline colour. Use `--outline-scheme vivid` or `--outline-lut PATH` to reuse the categorical schemes or a lookup table. For exact positional colours, use `--outline-colors` or `--outline-colors-file`. Each colour corresponds to one foreground label in ascending numeric order, including labels absent from the current slice or frame.
+Outlines follow the inside edge of each displayed region, including both sides of shared borders. The renderer checks neighbouring labels beyond the crop to locate region boundaries. Background has no outline colour. Use `--outline-scheme vivid` or `--outline-lut PATH` to reuse the categorical schemes or a lookup table. For exact positional colours, use `--outline-colors` or `--outline-colors-file`. Each colour corresponds to one foreground label in ascending numeric order, including labels absent from the current slice or frame.
 
 ### Runnable CLI and Python examples
 
