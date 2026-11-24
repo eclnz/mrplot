@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import os
-import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -12,7 +11,9 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from mrplot.media import write_png
+from mrplot.paths import find_plane_outputs
 from mrplot.rendering import RenderConfig, load_font, wrap_title
+from mrplot.slicing import Plane
 
 RGB = tuple[int, int, int]
 
@@ -49,54 +50,14 @@ def _unescape(text: str) -> str:
     return text.replace("\\,", ",")
 
 
-def parse_frames(text: str) -> list[int]:
-    """Parse a frame selection such as ``0,2`` or ``0-2,5`` into volume indices."""
-    frames: list[int] = []
-    for part in filter(None, (piece.strip() for piece in text.split(","))):
-        start, dash, stop = part.partition("-")
-        try:
-            low = int(start)
-            high = int(stop) if dash else low
-        except ValueError:
-            raise ValueError(f"Invalid frame selection {part!r}; use indices like 0,2 or 0-2.") from None
-        if low < 0 or high < low:
-            raise ValueError(f"Invalid frame range {part!r}.")
-        frames.extend(range(low, high + 1))
-    if not frames:
-        raise ValueError("The frame selection is empty.")
-    return frames
-
-
-def _row_images(
-    folder: Path, row: str, frames: Sequence[int] | None,
-) -> list[tuple[int | None, Path]]:
-    """Return the folder's single ``*_<row>.png``, or its selected ``*_<row>_vol-NNNN.png`` frames."""
-    singles = sorted(folder.glob(f"*_{row}.png"))
-    if len(singles) > 1:
-        raise ValueError(f"Expected one *_{row}.png in {folder}, found {', '.join(p.name for p in singles)}.")
-    pattern = re.compile(rf"(.*)_{re.escape(row)}_vol-(\d+)\.png")
-    stems: set[str] = set()
-    by_index: dict[int, Path] = {}
-    for path in folder.iterdir():
-        match = pattern.fullmatch(path.name)
-        if match:
-            stems.add(match[1])
-            by_index[int(match[2])] = path
-    if singles and by_index:
-        raise ValueError(
-            f"{folder} has both {singles[0].name} and *_{row}_vol-NNNN.png frames; keep one render per folder."
-        )
-    if singles:
-        return [(None, singles[0])]
-    if not by_index:
-        raise ValueError(f"Expected *_{row}.png or *_{row}_vol-NNNN.png frames in {folder}, found none.")
-    if len(stems) > 1:
-        raise ValueError(f"Frames from several renders in {folder}: {', '.join(sorted(stems))}.")
-    selected = sorted(by_index) if frames is None else list(frames)
-    missing = [index for index in selected if index not in by_index]
+def _selected_frames(
+    frames: Mapping[int, Path], selection: Sequence[int] | None, folder: Path, plane: Plane,
+) -> list[tuple[int, Path]]:
+    indices = list(frames) if selection is None else list(selection)
+    missing = [index for index in indices if index not in frames]
     if missing:
-        raise ValueError(f"{folder} has no {row} frame {', '.join(map(str, missing))}.")
-    return [(index, by_index[index]) for index in selected]
+        raise ValueError(f"{folder} has no {plane.value} frame {', '.join(map(str, missing))}.")
+    return [(index, frames[index]) for index in indices]
 
 
 def _frame_labels(label: str | None, indices: Sequence[int], folder: Path) -> list[str | None]:
@@ -110,41 +71,46 @@ def _frame_labels(label: str | None, indices: Sequence[int], folder: Path) -> li
     raise ValueError(f"{len(labels)} labels for {len(indices)} frames in {folder}.")
 
 
+def _folder_panels(
+    label: str | None, folder: Path, plane: Plane, frames: Sequence[int] | None,
+) -> list[Panel]:
+    """One plane's panels from a render folder: its single image, or its selected frames."""
+    outputs = find_plane_outputs(folder, plane)
+    if outputs.single is not None:
+        return [Panel(outputs.single, None if label is None else _unescape(label))]
+    selected = _selected_frames(outputs.frames, frames, folder, plane)
+    labels = _frame_labels(label, [index for index, _ in selected], folder)
+    return [Panel(path, text) for (_, path), text in zip(selected, labels)]
+
+
 def panels_from_directories(
     directories: Sequence[tuple[str | None, str | os.PathLike[str]]],
-    rows: Sequence[str],
+    planes: Sequence[Plane],
     *,
     frames: Sequence[int] | None = None,
 ) -> list[Panel]:
-    r"""Build a grid with one row per pattern and one or more columns per render output folder.
+    r"""Build a grid with one row per plane and one or more columns per render output folder.
 
-    For each row, a folder contributes its single PNG ending in ``_<row>.png``. A folder
-    of ``--frames-as-png`` output instead contributes one column per ``_<row>_vol-NNNN.png``
-    frame, in frame order (only ``frames``, if given). A frame folder's label may list
+    For each plane, a folder contributes its single ``*_<plane>.png``. A folder of
+    ``--frames-as-png`` output instead contributes one column per ``*_<plane>_vol-NNNN.png``
+    frame, in volume order (only ``frames``, if given). A frame folder's label may list
     one label per frame, separated by commas (``\,`` for a literal comma); a single label
     is numbered with each frame's volume index.
     """
-    if not rows:
-        raise ValueError("At least one row pattern is required.")
-    folders = [(label, Path(directory)) for label, directory in directories]
-    for _, folder in folders:
-        if not folder.is_dir():
-            raise ValueError(f"Not a directory: {folder}")
+    if not planes:
+        raise ValueError("At least one plane is required.")
     widths: dict[int, int] = {}
     panels: list[Panel] = []
-    for row in rows:
-        for position, (label, folder) in enumerate(folders):
-            images = _row_images(folder, row, frames)
-            if widths.setdefault(position, len(images)) != len(images):
+    for plane in planes:
+        for position, (label, directory) in enumerate(directories):
+            folder = Path(directory)
+            row = _folder_panels(label, folder, plane, frames)
+            if widths.setdefault(position, len(row)) != len(row):
                 raise ValueError(
-                    f"{folder} gives {widths[position]} images for {rows[0]} but {len(images)} for {row}."
+                    f"{folder} gives {widths[position]} images for {planes[0].value} "
+                    f"but {len(row)} for {plane.value}."
                 )
-            labels: list[str | None]
-            if images[0][0] is None:
-                labels = [None if label is None else _unescape(label)]
-            else:
-                labels = _frame_labels(label, [index for index, _ in images if index is not None], folder)
-            panels.extend(Panel(path, text) for (_, path), text in zip(images, labels))
+            panels.extend(row)
     return panels
 
 

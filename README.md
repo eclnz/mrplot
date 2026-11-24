@@ -25,7 +25,7 @@ mrplot compose --output overview.png --columns 2 --title sub-01 \
 mrplot compose --output grid.png --rows axial,coronal,sagittal --panel T1 t1 --panel Seg seg
 ```
 
-With `--rows`, each panel is a render output folder, and each row takes that folder's `*_<pattern>.png`. A folder of `--frames-as-png` output gives one column per `*_<pattern>_vol-NNNN.png` frame instead, so frames and single-volume renders, or several sessions, can share one grid:
+With `--rows`, each row is a plane (`axial`, `coronal` or `sagittal`) and each panel is a render output folder; the row takes that folder's `*_<plane>.png`. A folder of `--frames-as-png` output gives one column per `*_<plane>_vol-NNNN.png` frame instead, so frames and single-volume renders, or several sessions, can share one grid:
 
 ```sh
 mrplot compose --output asl.png --rows axial,coronal,sagittal \

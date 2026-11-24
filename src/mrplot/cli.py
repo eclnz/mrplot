@@ -12,13 +12,13 @@ from typing import Any, List, Optional
 from nibabel.filebasedimages import ImageFileError
 
 from mrplot.categorical import CATEGORICAL_SCHEMES, CategoricalColors
-from mrplot.compose import Panel, compose_files, panels_from_directories, parse_frames
+from mrplot.compose import Panel, compose_files, panels_from_directories
 from mrplot.colors import COLOR_SCALES, DEFAULT_CATEGORICAL_SCHEME, HEAT
 from mrplot.overlays import ImageOverlay, LabelOverlay
 from mrplot.paths import RenderJob, directory_jobs
 from mrplot.plotting import render_file
 from mrplot.rendering import Interpolation, RenderConfig
-from mrplot.slicing import SliceConfig
+from mrplot.slicing import Plane, SliceConfig
 from mrplot.volumes import validate_volume_path
 
 
@@ -69,6 +69,36 @@ def _hex_color(value: str) -> tuple[int, int, int]:
         return (int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16))
     except ValueError:
         raise argparse.ArgumentTypeError(f"invalid colour {value!r}; expected #RRGGBB") from None
+
+
+def _planes(value: str) -> list[Plane]:
+    """Parse a comma-separated list of planes, e.g. ``axial,coronal``."""
+    names = [name.strip() for name in value.split(",") if name.strip()]
+    choices = ", ".join(plane.value for plane in Plane)
+    try:
+        return [Plane(name) for name in names]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid plane in {value!r}; choose from {choices}") from None
+
+
+def _frames(value: str) -> list[int]:
+    """Parse a volume selection such as ``0,2`` or ``0-2,5`` into indices."""
+    frames: list[int] = []
+    for part in filter(None, (piece.strip() for piece in value.split(","))):
+        start, dash, stop = part.partition("-")
+        try:
+            low = int(start)
+            high = int(stop) if dash else low
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"invalid frame selection {part!r}; use indices like 0,2 or 0-2"
+            ) from None
+        if low < 0 or high < low:
+            raise argparse.ArgumentTypeError(f"invalid frame range {part!r}")
+        frames.extend(range(low, high + 1))
+    if not frames:
+        raise argparse.ArgumentTypeError("the frame selection is empty")
+    return frames
 
 
 def _rgb_hex(color: tuple[int, int, int]) -> str:
@@ -137,14 +167,14 @@ def _add_compose_parser(subparsers: Any) -> None:
         help="Add unlabelled images (or folders, with --rows).",
     )
     parser.add_argument(
-        "--rows", nargs="+", metavar="PATTERN",
-        help="Build the grid from render output folders: one row per pattern (e.g. axial,coronal,sagittal), "
-        "one column per folder, each cell the folder's *_<pattern>.png. A folder of --frames-as-png output "
-        "gives one column per *_<pattern>_vol-NNNN.png frame; label them with a comma-separated list "
-        "(\\, for a literal comma).",
+        "--rows", nargs="+", type=_planes, metavar="PLANE",
+        help="Build the grid from render output folders: one row per plane (axial, coronal, sagittal; "
+        "space- or comma-separated), one column per folder, each cell the folder's *_<plane>.png. "
+        "A folder of --frames-as-png output gives one column per *_<plane>_vol-NNNN.png frame; "
+        "label them with a comma-separated list (\\, for a literal comma).",
     )
     parser.add_argument(
-        "--frames", type=parse_frames, metavar="LIST",
+        "--frames", type=_frames, metavar="LIST",
         help="With --rows, take only these volumes from frame folders, e.g. 0,2 or 0-2 (default: all).",
     )
     parser.add_argument(
@@ -395,7 +425,7 @@ def _run_compose_command(args: argparse.Namespace) -> None:
         raise ValueError("compose requires at least one --panel or --images entry")
     columns = args.columns
     if args.rows is not None:
-        rows = [row for value in args.rows for row in value.split(",") if row]
+        rows = [plane for planes in args.rows for plane in planes]
         panels = panels_from_directories(entries, rows, frames=args.frames)
         width = len(panels) // len(rows)
         if columns is not None and columns != width:

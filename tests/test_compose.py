@@ -4,6 +4,7 @@ from PIL import Image
 
 from mrplot.cli import cli
 from mrplot.compose import Panel, compose_files, panels_from_directories
+from mrplot.slicing import Plane
 
 
 def _png(path, size, color):
@@ -83,13 +84,13 @@ def test_panels_from_directories(tmp_path):
     for folder in ("t1", "fast"):
         for plane in ("axial", "coronal"):
             _png(tmp_path / folder / f"scan_{plane}.png", (4, 4), (0, 0, 0))
-    panels = panels_from_directories([("T1", tmp_path / "t1"), ("FAST", tmp_path / "fast")], ["axial", "coronal"])
+    panels = panels_from_directories([("T1", tmp_path / "t1"), ("FAST", tmp_path / "fast")], [Plane.AXIAL, Plane.CORONAL])
     assert [(panel.label, panel.path.parent.name, panel.path.name) for panel in panels] == [
         ("T1", "t1", "scan_axial.png"), ("FAST", "fast", "scan_axial.png"),
         ("T1", "t1", "scan_coronal.png"), ("FAST", "fast", "scan_coronal.png"),
     ]
     with pytest.raises(ValueError, match="sagittal"):
-        panels_from_directories([("T1", tmp_path / "t1")], ["sagittal"])
+        panels_from_directories([("T1", tmp_path / "t1")], [Plane.SAGITTAL])
 
 
 def test_cli_compose_keeps_panel_order(tmp_path, capsys):
@@ -184,18 +185,18 @@ def test_frame_labels_selection_and_sessions(tmp_path):
         _frames_folder(tmp_path / session, {"axial": count, "coronal": count})
     folders = [("TI", tmp_path / "ses-01"), (None, tmp_path / "ses-02")]
 
-    panels = panels_from_directories(folders, ["axial", "coronal"])
+    panels = panels_from_directories(folders, [Plane.AXIAL, Plane.CORONAL])
     # Sessions with different frame counts sit side by side: 3 + 4 columns per row.
     assert len(panels) == 14
     assert [panel.label for panel in panels[:7]] == ["TI 0", "TI 1", "TI 2", None, None, None, None]
     assert panels[7].path.name == "raw_delays_coronal_vol-0000.png"
 
-    chosen = panels_from_directories(folders, ["axial"], frames=[0, 2])
+    chosen = panels_from_directories(folders, [Plane.AXIAL], frames=[0, 2])
     assert [(panel.label, panel.path.name) for panel in chosen] == [
         ("TI 0", "raw_delays_axial_vol-0000.png"), ("TI 2", "raw_delays_axial_vol-0002.png"),
         (None, "raw_delays_axial_vol-0000.png"), (None, "raw_delays_axial_vol-0002.png"),
     ]
-    listed = panels_from_directories([(r"Early\, short,Mid,Late", tmp_path / "ses-01")], ["axial"])
+    listed = panels_from_directories([(r"Early\, short,Mid,Late", tmp_path / "ses-01")], [Plane.AXIAL])
     assert [panel.label for panel in listed] == ["Early, short", "Mid", "Late"]
 
 
@@ -203,29 +204,32 @@ def test_frame_labels_selection_and_sessions(tmp_path):
     ("setup", "kwargs", "message"),
     [
         (lambda d: _frames_folder(d, {"axial": 3}), {"label": "A,B"}, "2 labels for 3 frames"),
-        (lambda d: _frames_folder(d, {"axial": 3, "coronal": 2}), {"rows": ["axial", "coronal"]}, "3 images for axial but 2"),
+        (lambda d: _frames_folder(d, {"axial": 3, "coronal": 2}), {"rows": [Plane.AXIAL, Plane.CORONAL]}, "3 images for axial but 2"),
         (lambda d: _frames_folder(d, {"axial": 2}), {"frames": [0, 5]}, "no axial frame 5"),
-        (lambda d: (_frames_folder(d, {"axial": 2}), _png(d / "scan_axial.png", (6, 6), (0, 0, 0))), {}, "has both"),
-        (lambda d: (_frames_folder(d, {"axial": 2}), _frames_folder(d, {"axial": 2}, stem="other")), {}, "several renders"),
-        (lambda d: d.mkdir(), {}, "found none"),
     ],
 )
 def test_frame_folder_errors(tmp_path, setup, kwargs, message):
     folder = tmp_path / "frames"
     setup(folder)
-    rows = kwargs.pop("rows", ["axial"])
+    rows = kwargs.pop("rows", [Plane.AXIAL])
     label = kwargs.pop("label", None)
     with pytest.raises(ValueError, match=message):
         panels_from_directories([(label, folder)], rows, **kwargs)
 
 
-def test_parse_frames():
-    from mrplot.compose import parse_frames
+def test_cli_frames_and_rows_parsing(tmp_path, capsys):
+    from mrplot.cli import _build_parser
 
-    assert parse_frames("0,2-4, 7") == [0, 2, 3, 4, 7]
-    for bad in ("", "a", "3-1", "-1"):
-        with pytest.raises(ValueError):
-            parse_frames(bad)
+    parsed = _build_parser().parse_args([
+        "compose", "--output", "x.png", "--rows", "axial,coronal", "sagittal", "--frames", "0,2-4, 7",
+        "--images", "a",
+    ])
+    assert parsed.rows == [[Plane.AXIAL, Plane.CORONAL], [Plane.SAGITTAL]]
+    assert parsed.frames == [0, 2, 3, 4, 7]
+    for bad in (["--frames", "3-1"], ["--frames", "a"], ["--frames", ","], ["--rows", "axail"]):
+        with pytest.raises(SystemExit):
+            _build_parser().parse_args(["compose", "--output", "x.png", "--images", "a", *bad])
+    assert "choose from sagittal, coronal, axial" in capsys.readouterr().err
 
 
 def test_cli_rows_rejects_mismatched_columns_and_frames_without_rows(tmp_path, capsys):

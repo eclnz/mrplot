@@ -12,7 +12,7 @@ from numpy.typing import NDArray
 from mrplot.categorical import CategoricalColors, LabelColors
 from mrplot.media import write_mp4_frames, write_png
 from mrplot.overlays import ImageOverlay, LabelOverlay, PreparedOverlay, prepare_overlay
-from mrplot.paths import nifti_basename
+from mrplot.paths import frame_output_path, nifti_basename, plane_output_stem
 from mrplot.rendering import (
     DEFAULT_TITLE,
     FrameLayout,
@@ -148,7 +148,6 @@ def _plot_slices(
     as_video = is_time_series and not config.frames_as_png
     suffix = "mp4" if as_video else "png"
     n_frames = triplet.axial.shape[-1] if is_time_series else 1
-    index_width = max(4, len(str(n_frames - 1)))
     written = []
     for prepared in planes:
         layer_frames = [layer.frames_for(prepared.plane, prepared.layout.output_size) for layer in overlays]
@@ -161,7 +160,7 @@ def _plot_slices(
             )
             for t in range(prepared.array.shape[-1])
         )
-        stem = os.path.join(output_dir, f"{base_name}_{prepared.plane.value}")
+        stem = plane_output_stem(output_dir, base_name, prepared.plane)
         if as_video:
             written.append(
                 write_mp4_frames(
@@ -170,7 +169,7 @@ def _plot_slices(
             )
         elif is_time_series:
             written.extend(
-                write_png(f"{stem}_vol-{t:0{index_width}d}.png", frame) for t, frame in enumerate(frames)
+                write_png(frame_output_path(stem, t, n_frames), frame) for t, frame in enumerate(frames)
             )
         else:
             written.append(write_png(f"{stem}.png", next(frames)))
