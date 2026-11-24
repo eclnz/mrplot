@@ -78,8 +78,17 @@ class RenderConfig:
     intensity_min: float | None = None
     intensity_max: float | None = None
     parcellation: CategoricalColors | None = None
+    title: str | None = None
+    show_title: bool = True
 
     def __post_init__(self) -> None:
+        if self.title is not None:
+            try:
+                format_title(self.title, name="", layers="", plane="")
+            except (KeyError, IndexError, ValueError) as error:
+                raise ValueError(
+                    f"Invalid title template {self.title!r}; use the fields {{name}}, {{layers}} and {{plane}}."
+                ) from error
         if self.fps <= 0:
             raise ValueError("Frames per second must be positive.")
         if self.parcellation is not None and (
@@ -114,6 +123,14 @@ class RenderConfig:
         for name, color in colors:
             if any(channel < 0 or channel > np.iinfo(np.uint8).max for channel in color):
                 raise ValueError(f"{name} channels must be in the uint8 range.")
+
+
+DEFAULT_TITLE = "{layers} {plane} Slice"
+
+
+def format_title(template: str, *, name: str, layers: str, plane: str) -> str:
+    """Fill a title template's ``{name}``, ``{layers}`` and ``{plane}`` fields."""
+    return template.format(name=name, layers=layers, plane=plane)
 
 
 _PIL_RESAMPLE = {
@@ -208,19 +225,60 @@ def _draw_crosshair(
     draw.line([(0, y), (width_px, y)], fill=config.crosshair_color, width=config.crosshair_width)
 
 
+def _text_width(draw: "ImageDraw.ImageDraw", text: str, font: ImageFont.ImageFont) -> float:
+    return float(draw.textlength(text, font=font))
+
+
+def _truncate(draw: "ImageDraw.ImageDraw", text: str, width: float, font: ImageFont.ImageFont) -> str:
+    ellipsis = "..."
+    while text and _text_width(draw, text + ellipsis, font) > width:
+        text = text[:-1]
+    return text.rstrip() + ellipsis if text else ellipsis
+
+
+def wrap_title(
+    draw: "ImageDraw.ImageDraw", title: str, width: float, font: ImageFont.ImageFont,
+    max_lines: int | None = None,
+) -> list[str]:
+    """Wrap a title at spaces to fit ``width``, shortening lines that still do not fit.
+
+    With ``max_lines``, the words that would spill past the last line are joined onto
+    it, and it is shortened with an ellipsis.
+    """
+    lines: list[str] = []
+    for word in title.split():
+        candidate = f"{lines[-1]} {word}" if lines else word
+        if lines and (
+            _text_width(draw, candidate, font) <= width
+            or (max_lines is not None and len(lines) >= max_lines)
+        ):
+            lines[-1] = candidate
+        else:
+            lines.append(word)
+    return [
+        line if _text_width(draw, line, font) <= width else _truncate(draw, line, width, font)
+        for line in lines
+    ]
+
+
 def _draw_title(
     draw: "ImageDraw.ImageDraw",
     title: str,
-    width_px: int,
+    output_size: Tuple[int, int],
     font: ImageFont.ImageFont,
     config: RenderConfig,
 ) -> None:
-    text_bbox = draw.textbbox((0, 0), title, font=font)
-    text_x = max((width_px - (text_bbox[2] - text_bbox[0])) // 2, 0)
-    draw.text(
-        (text_x, config.text_padding - text_bbox[1]), title,
-        font=font, fill=config.text_color,
-    )
+    width_px, height_px = output_size
+    available = max(width_px - 2 * config.text_padding, 1)
+    reference = draw.textbbox((0, 0), "Ag", font=font)
+    line_height = reference[3] - reference[1] + config.text_padding
+    # Wrap within the top quarter of the plot so the title never covers the slice centre.
+    max_lines = max(1, height_px // 4 // line_height)
+    for index, line in enumerate(wrap_title(draw, title, available, font, max_lines)):
+        text_bbox = draw.textbbox((0, 0), line, font=font)
+        text_x = max((width_px - (text_bbox[2] - text_bbox[0])) // 2, 0)
+        y = config.text_padding + index * line_height - reference[1]
+        draw.text((text_x, y), line, font=font, fill=config.text_color)
 
 
 def _prepare_colorbar(
@@ -275,12 +333,16 @@ def _append_colorbar(
     return canvas
 
 
+def load_font(font_path: str | None, size: int) -> ImageFont.ImageFont:
+    """Load Pillow's built-in scalable font, or a TrueType/OpenType file."""
+    if font_path is None:
+        return ImageFont.load_default(size=size)
+    return ImageFont.truetype(font_path, size=size)
+
+
 def load_render_resources(config: RenderConfig) -> RenderResources:
     """Load the drawing resources shared by all planes in a plot."""
-    if config.font_path is None:
-        font = ImageFont.load_default(size=config.font_size)
-    else:
-        font = ImageFont.truetype(config.font_path, size=config.font_size)
+    font = load_font(config.font_path, config.font_size)
     palette = ImagePalette.ImagePalette(mode="RGB", palette=config.color_scale.palette)
     return RenderResources(
         config=config,
@@ -389,7 +451,7 @@ def render_prepared_frame(
     if crosshair is not None:
         _draw_crosshair(draw, crosshair, layout.source_shape, layout.output_size, config)
     if title:
-        _draw_title(draw, title, layout.output_size[0], font, config)
+        _draw_title(draw, title, layout.output_size, font, config)
     if layout.colorbar is not None:
         image = _append_colorbar(image, layout.colorbar, config.background_color)
     return np.array(image, dtype=np.uint8)
