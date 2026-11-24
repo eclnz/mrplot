@@ -128,3 +128,14 @@ def test_cli_compose_errors(tmp_path, capsys):
     assert cli(["compose", "--output", str(tmp_path / "x.png")]) == 2
     assert "at least one" in capsys.readouterr().err
     assert cli(["compose", "--output", str(tmp_path / "x.png"), "--images", str(tmp_path / "missing.png")]) == 1
+
+
+def test_grid_layout_geometry():
+    from mrplot.compose import _GridLayout
+
+    grid = _GridLayout(count=5, columns=2, tile_size=(40, 30), label_height=10, spacing=(5, 3), title_height=20)
+    assert grid.cell_size == (50, 46)
+    assert grid.size == (100, 20 + 3 * 46)
+    assert grid.tile_origin(0) == (5, 23)
+    assert grid.tile_origin(3) == (55, 20 + 46 + 3)
+    assert _GridLayout(count=1, columns=4, tile_size=(8, 8), label_height=0, spacing=(0, 0)).size == (8, 8)
