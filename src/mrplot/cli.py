@@ -210,7 +210,7 @@ def _add_render_options(render_parser: argparse.ArgumentParser) -> None:
     _add_overlay_options(render_parser)
     render_parser.add_argument(
         "--font-size", type=int, default=RenderConfig().font_size,
-        help="Title and colorbar label size in pixels (default: 20).",
+        help=f"Title and colorbar label size in pixels (default: {RenderConfig().font_size}).",
     )
     render_parser.add_argument(
         "--font-path", default=None, help="TrueType or OpenType font (default: Pillow's built-in font).",

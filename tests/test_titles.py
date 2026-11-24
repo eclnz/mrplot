@@ -76,7 +76,7 @@ def test_wrap_title_fits_width_and_respects_line_limit():
 
 
 def test_long_title_wraps_instead_of_overflowing():
-    config = RenderConfig(max_fig_size=256, color_scale=GRAY)
+    config = RenderConfig(max_fig_size=256, color_scale=GRAY, font_size=20)
     data = np.zeros((32, 32))
     short = render_image_frame(data, (1.0, 1.0), config, (0.0, 1.0), "Axial")
     long = render_image_frame(data, (1.0, 1.0), config, (0.0, 1.0), "word " * 20)

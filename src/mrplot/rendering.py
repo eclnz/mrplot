@@ -58,7 +58,7 @@ class RenderConfig:
     max_fig_size: int = 1500
     interpolation: Interpolation = Interpolation.BICUBIC
     show_colorbar: bool = False
-    font_size: int = 20
+    font_size: int = 40
     font_path: Optional[str] = None
     pixel_alignment: int = 16
     text_color: Tuple[int, int, int] = (255, 255, 255)
