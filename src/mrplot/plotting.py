@@ -88,7 +88,10 @@ def plot_slices(
     output_dir: str | os.PathLike[str],
     config: RenderConfig = RenderConfig(),
 ) -> list[str]:
-    """Write PNGs for (height, width) slices or MP4s for (height, width, time) slices."""
+    """Write PNGs for (height, width) slices or MP4s for (height, width, time) slices.
+
+    With ``config.frames_as_png``, time series are written as one PNG per volume instead.
+    """
     return _plot_slices(triplet, base_name=base_name, output_dir=output_dir, config=config)
 
 
@@ -109,7 +112,10 @@ def _plot_slices(
         intensity_bounds=bounds, label_colors=label_colors,
     )
     is_time_series = triplet.axial.ndim == 3
-    suffix = "mp4" if is_time_series else "png"
+    as_video = is_time_series and not config.frames_as_png
+    suffix = "mp4" if as_video else "png"
+    n_frames = triplet.axial.shape[-1] if is_time_series else 1
+    index_width = max(4, len(str(n_frames - 1)))
     written = []
     for prepared in planes:
         layer_frames = [layer.frames_for(prepared.plane, prepared.layout.output_size) for layer in overlays]
@@ -122,15 +128,19 @@ def _plot_slices(
             )
             for t in range(prepared.array.shape[-1])
         )
-        path = os.path.join(output_dir, f"{base_name}_{prepared.plane.value}.{suffix}")
-        if is_time_series:
+        stem = os.path.join(output_dir, f"{base_name}_{prepared.plane.value}")
+        if as_video:
             written.append(
                 write_mp4_frames(
-                    path, frames, fps=config.fps, macro_block_size=config.pixel_alignment,
+                    f"{stem}.{suffix}", frames, fps=config.fps, macro_block_size=config.pixel_alignment,
                 )
             )
+        elif is_time_series:
+            written.extend(
+                write_png(f"{stem}_vol-{t:0{index_width}d}.png", frame) for t, frame in enumerate(frames)
+            )
         else:
-            written.append(write_png(path, next(frames)))
+            written.append(write_png(f"{stem}.png", next(frames)))
     return written
 
 

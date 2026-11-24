@@ -74,6 +74,7 @@ class RenderConfig:
     slicing: SliceConfig = SliceConfig()
     crosshairs: bool = False
     fps: int = 10
+    frames_as_png: bool = False
     intensity_min: float | None = None
     intensity_max: float | None = None
     parcellation: CategoricalColors | None = None

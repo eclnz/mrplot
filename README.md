@@ -1,6 +1,6 @@
 # mrplot
 
-Render axial, coronal, and sagittal views of NIfTI volumes. A 3D volume produces three PNGs. A 4D volume produces three MP4s.
+Render axial, coronal, and sagittal views of NIfTI volumes. A 3D volume produces three PNGs. A 4D volume produces three MP4s, or one PNG per volume and plane with `--frames-as-png`.
 
 ## Quick start
 

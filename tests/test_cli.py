@@ -1,6 +1,7 @@
 import os
 import shutil
 
+import nibabel as nib
 import pytest
 
 from mrplot.cli import _build_parser, cli
@@ -98,6 +99,19 @@ def test_render_4d_produces_mp4s(sample_4d_nifti, tmp_path):
         path = output_dir / f"{base}_{plane}.mp4"
         assert path.exists()
         assert path.stat().st_size > 0
+
+
+def test_render_4d_frames_as_png(sample_4d_nifti, tmp_path):
+    output_dir = tmp_path / "out"
+    exit_code = cli(["render", str(sample_4d_nifti), "--output-dir", str(output_dir), "--frames-as-png"])
+    assert exit_code == 0
+
+    base = _base_name(sample_4d_nifti)
+    n_volumes = nib.load(str(sample_4d_nifti)).shape[3]
+    assert not list(output_dir.glob("*.mp4"))
+    for plane in ("axial", "coronal", "sagittal"):
+        frames = sorted(output_dir.glob(f"{base}_{plane}_vol-*.png"))
+        assert [path.name for path in frames] == [f"{base}_{plane}_vol-{t:04d}.png" for t in range(n_volumes)]
 
 
 def test_render_5d_is_rejected_clearly(sample_5d_nifti, tmp_path, capsys):
