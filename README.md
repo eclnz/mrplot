@@ -25,7 +25,17 @@ mrplot compose --output overview.png --columns 2 --title sub-01 \
 mrplot compose --output grid.png --rows axial,coronal,sagittal --panel T1 t1 --panel Seg seg
 ```
 
-With `--rows`, each panel is a render output folder, and each row takes that folder's `*_<pattern>.png`. The same is available from Python as `mrplot.compose.compose_files`.
+With `--rows`, each panel is a render output folder, and each row takes that folder's `*_<pattern>.png`. A folder of `--frames-as-png` output gives one column per `*_<pattern>_vol-NNNN.png` frame instead, so frames and single-volume renders, or several sessions, can share one grid:
+
+```sh
+mrplot compose --output asl.png --rows axial,coronal,sagittal \
+    --panel "TI 1.57 s,TI 2.46 s,TI 4.5 s" ses-01/delays \
+    --panel Console ses-01/console --panel BASIL ses-01/basil
+```
+
+Give a frame folder one label per frame, separated by commas (`\,` for a literal comma), or a single label, which is numbered by volume index. `--frames 0,2` or `--frames 0-2` takes only some volumes. Each row must use the same number of columns from each folder. With `--rows`, `--columns` defaults to the width of a row and must match it if given.
+
+The same is available from Python as `mrplot.compose.compose_files` and `panels_from_directories`.
 
 ## Tests
 

@@ -139,3 +139,100 @@ def test_grid_layout_geometry():
     assert grid.tile_origin(0) == (5, 23)
     assert grid.tile_origin(3) == (55, 20 + 46 + 3)
     assert _GridLayout(count=1, columns=4, tile_size=(8, 8), label_height=0, spacing=(0, 0)).size == (8, 8)
+
+
+def _frames_folder(folder, plane_counts, stem="raw_delays", color=(200, 0, 0)):
+    for plane, count in plane_counts.items():
+        for index in range(count):
+            _png(folder / f"{stem}_{plane}_vol-{index:04d}.png", (6, 6), (color[0], index * 40, color[2]))
+
+
+def test_frame_folder_matches_the_hand_listed_grid(tmp_path):
+    """Acceptance for issue #9: three planes x (three delays + two single maps)."""
+    import numpy as np
+    from tests.phantoms import save_phantom
+
+    delays = save_phantom(tmp_path, "raw_delays", np.random.default_rng(0).random((10, 12, 8, 3)).astype(np.float32))
+    console = save_phantom(tmp_path, "scanner_cbf", np.random.default_rng(1).random((10, 12, 8)).astype(np.float32))
+    basil = save_phantom(tmp_path, "perfusion_calib", np.random.default_rng(2).random((10, 12, 8)).astype(np.float32))
+    common = ["--fps", "1"]
+    assert cli(["render", str(delays), "--output-dir", str(tmp_path / "delays"), "--frames-as-png", *common]) == 0
+    assert cli(["render", str(console), "--output-dir", str(tmp_path / "console"), *common]) == 0
+    assert cli(["render", str(basil), "--output-dir", str(tmp_path / "basil"), *common]) == 0
+
+    automatic = tmp_path / "rows.png"
+    assert cli([
+        "compose", "--output", str(automatic), "--rows", "axial", "coronal", "sagittal",
+        "--panel", "TI 1.57 s,TI 2.46 s,TI 4.5 s", str(tmp_path / "delays"),
+        "--panel", "Console", str(tmp_path / "console"), "--panel", "BASIL", str(tmp_path / "basil"),
+    ]) == 0
+
+    manual_args = ["compose", "--output", str(tmp_path / "manual.png"), "--columns", "5"]
+    for plane in ("axial", "coronal", "sagittal"):
+        for index, label in enumerate(("TI 1.57 s", "TI 2.46 s", "TI 4.5 s")):
+            manual_args += ["--panel", label, str(tmp_path / "delays" / f"raw_delays_{plane}_vol-{index:04d}.png")]
+        manual_args += ["--panel", "Console", str(tmp_path / "console" / f"scanner_cbf_{plane}.png")]
+        manual_args += ["--panel", "BASIL", str(tmp_path / "basil" / f"perfusion_calib_{plane}.png")]
+    assert cli(manual_args) == 0
+
+    with Image.open(automatic) as a, Image.open(tmp_path / "manual.png") as b:
+        np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
+
+
+def test_frame_labels_selection_and_sessions(tmp_path):
+    for session, count in (("ses-01", 3), ("ses-02", 4)):
+        _frames_folder(tmp_path / session, {"axial": count, "coronal": count})
+    folders = [("TI", tmp_path / "ses-01"), (None, tmp_path / "ses-02")]
+
+    panels = panels_from_directories(folders, ["axial", "coronal"])
+    # Sessions with different frame counts sit side by side: 3 + 4 columns per row.
+    assert len(panels) == 14
+    assert [panel.label for panel in panels[:7]] == ["TI 0", "TI 1", "TI 2", None, None, None, None]
+    assert panels[7].path.name == "raw_delays_coronal_vol-0000.png"
+
+    chosen = panels_from_directories(folders, ["axial"], frames=[0, 2])
+    assert [(panel.label, panel.path.name) for panel in chosen] == [
+        ("TI 0", "raw_delays_axial_vol-0000.png"), ("TI 2", "raw_delays_axial_vol-0002.png"),
+        (None, "raw_delays_axial_vol-0000.png"), (None, "raw_delays_axial_vol-0002.png"),
+    ]
+    listed = panels_from_directories([(r"Early\, short,Mid,Late", tmp_path / "ses-01")], ["axial"])
+    assert [panel.label for panel in listed] == ["Early, short", "Mid", "Late"]
+
+
+@pytest.mark.parametrize(
+    ("setup", "kwargs", "message"),
+    [
+        (lambda d: _frames_folder(d, {"axial": 3}), {"label": "A,B"}, "2 labels for 3 frames"),
+        (lambda d: _frames_folder(d, {"axial": 3, "coronal": 2}), {"rows": ["axial", "coronal"]}, "3 images for axial but 2"),
+        (lambda d: _frames_folder(d, {"axial": 2}), {"frames": [0, 5]}, "no axial frame 5"),
+        (lambda d: (_frames_folder(d, {"axial": 2}), _png(d / "scan_axial.png", (6, 6), (0, 0, 0))), {}, "has both"),
+        (lambda d: (_frames_folder(d, {"axial": 2}), _frames_folder(d, {"axial": 2}, stem="other")), {}, "several renders"),
+        (lambda d: d.mkdir(), {}, "found none"),
+    ],
+)
+def test_frame_folder_errors(tmp_path, setup, kwargs, message):
+    folder = tmp_path / "frames"
+    setup(folder)
+    rows = kwargs.pop("rows", ["axial"])
+    label = kwargs.pop("label", None)
+    with pytest.raises(ValueError, match=message):
+        panels_from_directories([(label, folder)], rows, **kwargs)
+
+
+def test_parse_frames():
+    from mrplot.compose import parse_frames
+
+    assert parse_frames("0,2-4, 7") == [0, 2, 3, 4, 7]
+    for bad in ("", "a", "3-1", "-1"):
+        with pytest.raises(ValueError):
+            parse_frames(bad)
+
+
+def test_cli_rows_rejects_mismatched_columns_and_frames_without_rows(tmp_path, capsys):
+    _frames_folder(tmp_path / "frames", {"axial": 3})
+    out = str(tmp_path / "x.png")
+    assert cli(["compose", "--output", out, "--rows", "axial", "--columns", "2", "--images", str(tmp_path / "frames")]) == 2
+    assert "--rows gives 3 columns" in capsys.readouterr().err
+    assert cli(["compose", "--output", out, "--rows", "axial", "--columns", "3", "--images", str(tmp_path / "frames")]) == 0
+    assert cli(["compose", "--output", out, "--frames", "0", "--images", str(tmp_path / "frames" / "raw_delays_axial_vol-0000.png")]) == 2
+    assert "--frames requires --rows" in capsys.readouterr().err

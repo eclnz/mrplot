@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -29,27 +30,121 @@ class Panel:
     label: str | None = None
 
 
-def panels_from_directories(
-    directories: Sequence[tuple[str | None, str | os.PathLike[str]]], rows: Sequence[str],
-) -> list[Panel]:
-    """Build a grid with one row per pattern and one column per render output folder.
+def split_labels(text: str) -> list[str]:
+    r"""Split a label list at commas; ``\,`` is a literal comma."""
+    labels, current, characters = [], "", iter(text)
+    for character in characters:
+        if character == "\\":
+            following = next(characters, "")
+            current += "," if following == "," else character + following
+        elif character == ",":
+            labels.append(current.strip())
+            current = ""
+        else:
+            current += character
+    return [*labels, current.strip()]
 
-    Each cell is the single PNG in that folder whose name ends in ``_<row>.png``,
-    e.g. ``rows=("axial", "coronal")`` picks ``*_axial.png`` then ``*_coronal.png``.
+
+def _unescape(text: str) -> str:
+    return text.replace("\\,", ",")
+
+
+def parse_frames(text: str) -> list[int]:
+    """Parse a frame selection such as ``0,2`` or ``0-2,5`` into volume indices."""
+    frames: list[int] = []
+    for part in filter(None, (piece.strip() for piece in text.split(","))):
+        start, dash, stop = part.partition("-")
+        try:
+            low = int(start)
+            high = int(stop) if dash else low
+        except ValueError:
+            raise ValueError(f"Invalid frame selection {part!r}; use indices like 0,2 or 0-2.") from None
+        if low < 0 or high < low:
+            raise ValueError(f"Invalid frame range {part!r}.")
+        frames.extend(range(low, high + 1))
+    if not frames:
+        raise ValueError("The frame selection is empty.")
+    return frames
+
+
+def _row_images(
+    folder: Path, row: str, frames: Sequence[int] | None,
+) -> list[tuple[int | None, Path]]:
+    """Return the folder's single ``*_<row>.png``, or its selected ``*_<row>_vol-NNNN.png`` frames."""
+    singles = sorted(folder.glob(f"*_{row}.png"))
+    if len(singles) > 1:
+        raise ValueError(f"Expected one *_{row}.png in {folder}, found {', '.join(p.name for p in singles)}.")
+    pattern = re.compile(rf"(.*)_{re.escape(row)}_vol-(\d+)\.png")
+    stems: set[str] = set()
+    by_index: dict[int, Path] = {}
+    for path in folder.iterdir():
+        match = pattern.fullmatch(path.name)
+        if match:
+            stems.add(match[1])
+            by_index[int(match[2])] = path
+    if singles and by_index:
+        raise ValueError(
+            f"{folder} has both {singles[0].name} and *_{row}_vol-NNNN.png frames; keep one render per folder."
+        )
+    if singles:
+        return [(None, singles[0])]
+    if not by_index:
+        raise ValueError(f"Expected *_{row}.png or *_{row}_vol-NNNN.png frames in {folder}, found none.")
+    if len(stems) > 1:
+        raise ValueError(f"Frames from several renders in {folder}: {', '.join(sorted(stems))}.")
+    selected = sorted(by_index) if frames is None else list(frames)
+    missing = [index for index in selected if index not in by_index]
+    if missing:
+        raise ValueError(f"{folder} has no {row} frame {', '.join(map(str, missing))}.")
+    return [(index, by_index[index]) for index in selected]
+
+
+def _frame_labels(label: str | None, indices: Sequence[int], folder: Path) -> list[str | None]:
+    if label is None:
+        return [None] * len(indices)
+    labels = split_labels(label)
+    if len(labels) == len(indices):
+        return list(labels)
+    if len(labels) == 1:
+        return [f"{labels[0]} {index}" for index in indices]
+    raise ValueError(f"{len(labels)} labels for {len(indices)} frames in {folder}.")
+
+
+def panels_from_directories(
+    directories: Sequence[tuple[str | None, str | os.PathLike[str]]],
+    rows: Sequence[str],
+    *,
+    frames: Sequence[int] | None = None,
+) -> list[Panel]:
+    r"""Build a grid with one row per pattern and one or more columns per render output folder.
+
+    For each row, a folder contributes its single PNG ending in ``_<row>.png``. A folder
+    of ``--frames-as-png`` output instead contributes one column per ``_<row>_vol-NNNN.png``
+    frame, in frame order (only ``frames``, if given). A frame folder's label may list
+    one label per frame, separated by commas (``\,`` for a literal comma); a single label
+    is numbered with each frame's volume index.
     """
     if not rows:
         raise ValueError("At least one row pattern is required.")
-    panels = []
+    folders = [(label, Path(directory)) for label, directory in directories]
+    for _, folder in folders:
+        if not folder.is_dir():
+            raise ValueError(f"Not a directory: {folder}")
+    widths: dict[int, int] = {}
+    panels: list[Panel] = []
     for row in rows:
-        for label, directory in directories:
-            folder = Path(directory)
-            if not folder.is_dir():
-                raise ValueError(f"Not a directory: {folder}")
-            matches = sorted(folder.glob(f"*_{row}.png"))
-            if len(matches) != 1:
-                found = ", ".join(path.name for path in matches) or "none"
-                raise ValueError(f"Expected one *_{row}.png in {folder}, found {found}.")
-            panels.append(Panel(matches[0], label))
+        for position, (label, folder) in enumerate(folders):
+            images = _row_images(folder, row, frames)
+            if widths.setdefault(position, len(images)) != len(images):
+                raise ValueError(
+                    f"{folder} gives {widths[position]} images for {rows[0]} but {len(images)} for {row}."
+                )
+            labels: list[str | None]
+            if images[0][0] is None:
+                labels = [None if label is None else _unescape(label)]
+            else:
+                labels = _frame_labels(label, [index for index, _ in images if index is not None], folder)
+            panels.extend(Panel(path, text) for (_, path), text in zip(images, labels))
     return panels
 
 

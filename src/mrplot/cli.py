@@ -12,7 +12,7 @@ from typing import Any, List, Optional
 from nibabel.filebasedimages import ImageFileError
 
 from mrplot.categorical import CATEGORICAL_SCHEMES, CategoricalColors
-from mrplot.compose import Panel, compose_files, panels_from_directories
+from mrplot.compose import Panel, compose_files, panels_from_directories, parse_frames
 from mrplot.colors import COLOR_SCALES, DEFAULT_CATEGORICAL_SCHEME, HEAT
 from mrplot.overlays import ImageOverlay, LabelOverlay
 from mrplot.paths import RenderJob, directory_jobs
@@ -139,7 +139,13 @@ def _add_compose_parser(subparsers: Any) -> None:
     parser.add_argument(
         "--rows", nargs="+", metavar="PATTERN",
         help="Build the grid from render output folders: one row per pattern (e.g. axial,coronal,sagittal), "
-        "one column per folder, each cell the folder's *_<pattern>.png.",
+        "one column per folder, each cell the folder's *_<pattern>.png. A folder of --frames-as-png output "
+        "gives one column per *_<pattern>_vol-NNNN.png frame; label them with a comma-separated list "
+        "(\\, for a literal comma).",
+    )
+    parser.add_argument(
+        "--frames", type=parse_frames, metavar="LIST",
+        help="With --rows, take only these volumes from frame folders, e.g. 0,2 or 0-2 (default: all).",
     )
     parser.add_argument(
         "--columns", type=int, default=None,
@@ -390,9 +396,14 @@ def _run_compose_command(args: argparse.Namespace) -> None:
     columns = args.columns
     if args.rows is not None:
         rows = [row for value in args.rows for row in value.split(",") if row]
-        panels = panels_from_directories(entries, rows)
-        columns = len(entries) if columns is None else columns
+        panels = panels_from_directories(entries, rows, frames=args.frames)
+        width = len(panels) // len(rows)
+        if columns is not None and columns != width:
+            raise ValueError(f"--columns {columns} would break the rows; --rows gives {width} columns per row")
+        columns = width
     else:
+        if args.frames is not None:
+            raise ValueError("--frames requires --rows")
         panels = [Panel(path, label) for label, path in entries]
     print(compose_files(
         panels, args.output, columns=columns, title=args.title, spacing=tuple(args.spacing),
