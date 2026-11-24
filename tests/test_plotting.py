@@ -31,6 +31,37 @@ def test_plot_prepared_slices_without_cli(shape, suffix, tmp_path):
                 assert reader.count_frames() == shape[-1]
 
 
+@pytest.mark.parametrize("shape", [(4, 5, 6, 3), (4, 5, 6, 1)])
+def test_plot_time_series_as_png_frames(shape, tmp_path):
+    triplet = prepare_slices(nib.Nifti1Image(np.zeros(shape), np.eye(4)))
+
+    paths = plot_slices(
+        triplet, base_name="scan", output_dir=tmp_path,
+        config=RenderConfig(max_fig_size=32, frames_as_png=True),
+    )
+
+    expected = [
+        tmp_path / f"scan_{plane}_vol-{t:04d}.png"
+        for plane in ("sagittal", "coronal", "axial")
+        for t in range(shape[-1])
+    ]
+    assert paths == [str(path) for path in expected]
+    assert sorted(tmp_path.iterdir()) == sorted(expected)
+    for path in expected:
+        assert imageio.v2.imread(path).ndim == 3
+
+
+def test_frames_as_png_does_not_change_3d_output(tmp_path):
+    triplet = prepare_slices(nib.Nifti1Image(np.zeros((4, 5, 6)), np.eye(4)))
+
+    paths = plot_slices(
+        triplet, base_name="scan", output_dir=tmp_path,
+        config=RenderConfig(max_fig_size=32, frames_as_png=True),
+    )
+
+    assert paths == [str(tmp_path / f"scan_{plane}.png") for plane in ("sagittal", "coronal", "axial")]
+
+
 @pytest.mark.parametrize(
     "axial",
     [np.zeros((4, 5, 3)), np.zeros((0, 5))],

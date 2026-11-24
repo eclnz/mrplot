@@ -98,6 +98,11 @@ def _add_render_options(render_parser: argparse.ArgumentParser) -> None:
         "--fps", type=int, default=10, help="Frames per second for 4D data (default: 10)."
     )
     render_parser.add_argument(
+        "--frames-as-png",
+        action="store_true",
+        help="For 4D data, write one PNG per volume (<name>_<plane>_vol-0000.png, ...) instead of an MP4.",
+    )
+    render_parser.add_argument(
         "--interpolation",
         choices=[interpolation.value for interpolation in Interpolation],
         default=Interpolation.BICUBIC.value,
@@ -265,6 +270,7 @@ def _run_render_command(args: argparse.Namespace, jobs: Iterable[RenderJob]) -> 
         slicing=SliceConfig(padding=args.padding, crop=args.crop),
         crosshairs=args.crosshairs,
         fps=args.fps,
+        frames_as_png=args.frames_as_png,
         intensity_min=args.intensity_min,
         intensity_max=args.intensity_max,
         parcellation=_parcellation_colors(args),
