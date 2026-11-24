@@ -1,14 +1,18 @@
-"""NIfTI filename handling and directory render planning."""
+"""NIfTI filename handling, render output naming, and directory render planning."""
 
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+import re
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import NamedTuple
 
+from mrplot.slicing import Plane
+
 
 _NIFTI_SUFFIXES = (".nii.gz", ".nii")
+_MIN_FRAME_DIGITS = 4
 
 
 class RenderJob(NamedTuple):
@@ -23,6 +27,65 @@ def nifti_basename(path: str | os.PathLike[str]) -> str:
         if filename.lower().endswith(suffix):
             return filename[:-len(suffix)]
     return filename
+
+
+def plane_output_stem(output_dir: str | os.PathLike[str], base_name: str, plane: Plane) -> str:
+    """Path of a plane's output without its suffix: ``<output_dir>/<base_name>_<plane>``."""
+    return os.path.join(output_dir, f"{base_name}_{plane.value}")
+
+
+def frame_output_path(stem: str, index: int, frame_count: int) -> str:
+    """PNG path for one volume of a time series: ``<stem>_vol-NNNN.png``.
+
+    Indices are zero-padded to at least four digits, or more when the series needs them,
+    so the files sort in volume order.
+    """
+    width = max(_MIN_FRAME_DIGITS, len(str(frame_count - 1)))
+    return f"{stem}_vol-{index:0{width}d}.png"
+
+
+class PlaneOutputs(NamedTuple):
+    """One render's PNG output for a plane: a single image, or frames by volume index."""
+
+    single: Path | None
+    frames: Mapping[int, Path]
+
+
+def find_plane_outputs(folder: str | os.PathLike[str], plane: Plane) -> PlaneOutputs:
+    """Find the PNGs that one ``render`` wrote for ``plane`` in an output folder.
+
+    Reads back the names written by :func:`plane_output_stem` and :func:`frame_output_path`.
+    The folder must hold exactly one render for the plane: one ``*_<plane>.png``, or
+    ``*_<plane>_vol-NNNN.png`` frames sharing one base name.
+    """
+    directory = Path(folder)
+    if not directory.is_dir():
+        raise ValueError(f"Not a directory: {directory}")
+    singles = sorted(directory.glob(f"*_{plane.value}.png"))
+    frame_name = re.compile(rf"(.*)_{plane.value}_vol-(\d+)\.png")
+    stems: set[str] = set()
+    frames: dict[int, Path] = {}
+    for path in directory.iterdir():
+        match = frame_name.fullmatch(path.name)
+        if match:
+            stems.add(match[1])
+            frames[int(match[2])] = path
+
+    pattern = f"*_{plane.value}.png"
+    if len(singles) > 1:
+        raise ValueError(f"Expected one {pattern} in {directory}, found {', '.join(p.name for p in singles)}.")
+    if singles and frames:
+        raise ValueError(
+            f"{directory} has both {singles[0].name} and *_{plane.value}_vol-NNNN.png frames; "
+            "keep one render per folder."
+        )
+    if len(stems) > 1:
+        raise ValueError(f"Frames from several renders in {directory}: {', '.join(sorted(stems))}.")
+    if not singles and not frames:
+        raise ValueError(
+            f"Expected {pattern} or *_{plane.value}_vol-NNNN.png frames in {directory}, found none."
+        )
+    return PlaneOutputs(singles[0] if singles else None, dict(sorted(frames.items())))
 
 
 def _validate_directory_roots(input_dir: Path, output_dir: Path) -> None:

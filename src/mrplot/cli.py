@@ -12,18 +12,20 @@ from typing import Any, List, Optional
 from nibabel.filebasedimages import ImageFileError
 
 from mrplot.categorical import CATEGORICAL_SCHEMES, CategoricalColors
+from mrplot.compose import Panel, compose_files, panels_from_directories
 from mrplot.colors import COLOR_SCALES, DEFAULT_CATEGORICAL_SCHEME, HEAT
 from mrplot.overlays import ImageOverlay, LabelOverlay
 from mrplot.paths import RenderJob, directory_jobs
 from mrplot.plotting import render_file
 from mrplot.rendering import Interpolation, RenderConfig
-from mrplot.slicing import SliceConfig
+from mrplot.slicing import Plane, SliceConfig
 from mrplot.volumes import validate_volume_path
 
 
 class _Command(Enum):
     RENDER = "render"
     RENDER_DIRECTORY = "render-directory"
+    COMPOSE = "compose"
 
 
 class _LayerKind(Enum):
@@ -42,6 +44,65 @@ class _LayerOption(argparse.Action):
             namespace.layer_options = options
         kind, _, setting = self.dest.partition("_")
         options.append((_LayerKind(kind), setting, values))
+
+
+class _PanelOption(argparse.Action):
+    """Collect --panel and --images entries in the order they were given."""
+
+    def __call__(
+        self, parser: argparse.ArgumentParser, namespace: argparse.Namespace,
+        values: Any, option_string: str | None = None,
+    ) -> None:
+        panels = getattr(namespace, self.dest, None) or []
+        if option_string == "--panel":
+            panels.append((values[0], values[1]))
+        else:
+            panels.extend((None, value) for value in values)
+        setattr(namespace, self.dest, panels)
+
+
+def _hex_color(value: str) -> tuple[int, int, int]:
+    text = value.removeprefix("#")
+    if len(text) != 6:
+        raise argparse.ArgumentTypeError(f"invalid colour {value!r}; expected #RRGGBB")
+    try:
+        return (int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid colour {value!r}; expected #RRGGBB") from None
+
+
+def _planes(value: str) -> list[Plane]:
+    """Parse a comma-separated list of planes, e.g. ``axial,coronal``."""
+    names = [name.strip() for name in value.split(",") if name.strip()]
+    choices = ", ".join(plane.value for plane in Plane)
+    try:
+        return [Plane(name) for name in names]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid plane in {value!r}; choose from {choices}") from None
+
+
+def _frames(value: str) -> list[int]:
+    """Parse a volume selection such as ``0,2`` or ``0-2,5`` into indices."""
+    frames: list[int] = []
+    for part in filter(None, (piece.strip() for piece in value.split(","))):
+        start, dash, stop = part.partition("-")
+        try:
+            low = int(start)
+            high = int(stop) if dash else low
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"invalid frame selection {part!r}; use indices like 0,2 or 0-2"
+            ) from None
+        if low < 0 or high < low:
+            raise argparse.ArgumentTypeError(f"invalid frame range {part!r}")
+        frames.extend(range(low, high + 1))
+    if not frames:
+        raise argparse.ArgumentTypeError("the frame selection is empty")
+    return frames
+
+
+def _rgb_hex(color: tuple[int, int, int]) -> str:
+    return "#" + "".join(f"{channel:02X}" for channel in color)
 
 
 @dataclass(slots=True)
@@ -81,7 +142,63 @@ def _build_parser() -> argparse.ArgumentParser:
     directory_parser.add_argument("input_dir")
     for command_parser in (render_parser, directory_parser):
         _add_render_options(command_parser)
+    _add_compose_parser(subparsers)
     return parser
+
+
+def _add_compose_parser(subparsers: Any) -> None:
+    defaults = RenderConfig()
+    parser = subparsers.add_parser(
+        _Command.COMPOSE.value,
+        help="Tile rendered PNGs into one labelled figure.",
+        description=(
+            "Tile PNGs row by row into one figure. Each tile is as large as the largest image, "
+            "and smaller images are centred in their tile."
+        ),
+    )
+    parser.add_argument("--output", required=True, help="Path of the PNG to write.")
+    parser.add_argument(
+        "--panel", nargs=2, metavar=("LABEL", "PNG"), dest="panels", action=_PanelOption,
+        help="Add an image with LABEL written under it. Repeat for more panels. "
+        "With --rows, PNG is a render output folder instead.",
+    )
+    parser.add_argument(
+        "--images", nargs="+", metavar="PNG", dest="panels", action=_PanelOption,
+        help="Add unlabelled images (or folders, with --rows).",
+    )
+    parser.add_argument(
+        "--rows", nargs="+", type=_planes, metavar="PLANE",
+        help="Build the grid from render output folders: one row per plane (axial, coronal, sagittal; "
+        "space- or comma-separated), one column per folder, each cell the folder's *_<plane>.png. "
+        "A folder of --frames-as-png output gives one column per *_<plane>_vol-NNNN.png frame; "
+        "label them with a comma-separated list (\\, for a literal comma).",
+    )
+    parser.add_argument(
+        "--frames", type=_frames, metavar="LIST",
+        help="With --rows, take only these volumes from frame folders, e.g. 0,2 or 0-2 (default: all).",
+    )
+    parser.add_argument(
+        "--columns", type=int, default=None,
+        help="Panels per row (default: all in one row, or one per folder with --rows).",
+    )
+    parser.add_argument("--title", default=None, help="Title drawn above the grid.")
+    parser.add_argument(
+        "--spacing", nargs=2, type=int, metavar=("X", "Y"), default=(16, 16),
+        help="Horizontal and vertical gap in pixels around each tile (default: 16 16).",
+    )
+    parser.add_argument("--font-path", default=None, help="TrueType or OpenType font (default: Pillow's built-in font).")
+    parser.add_argument(
+        "--font-size", type=int, default=None,
+        help="Label size in pixels; the title is 25%% larger (default: scaled to the tile size).",
+    )
+    parser.add_argument(
+        "--background-color", type=_hex_color, default=defaults.background_color, metavar="HEX",
+        help=f"Background colour (default: {_rgb_hex(defaults.background_color)}).",
+    )
+    parser.add_argument(
+        "--text-color", type=_hex_color, default=defaults.text_color, metavar="HEX",
+        help=f"Text colour (default: {_rgb_hex(defaults.text_color)}).",
+    )
 
 
 def _add_render_options(render_parser: argparse.ArgumentParser) -> None:
@@ -129,8 +246,18 @@ def _add_render_options(render_parser: argparse.ArgumentParser) -> None:
     _add_overlay_options(render_parser)
     render_parser.add_argument(
         "--font-size", type=int, default=RenderConfig().font_size,
-        help="Title and colorbar label size in pixels (default: 20).",
+        help=f"Title and colorbar label size in pixels (default: {RenderConfig().font_size}).",
     )
+    render_parser.add_argument(
+        "--font-path", default=None, help="TrueType or OpenType font (default: Pillow's built-in font).",
+    )
+    titles = render_parser.add_mutually_exclusive_group()
+    titles.add_argument(
+        "--title", default=None,
+        help="Title for each plane. May use {name} (base file name), {layers} (base and drawn layers) "
+        "and {plane}; default: '{layers} {plane} Slice'.",
+    )
+    titles.add_argument("--no-title", action="store_true", help="Draw no title.")
     render_parser.add_argument(
         "--crosshairs",
         action="store_true",
@@ -201,6 +328,8 @@ def _jobs_for_command(command: _Command, args: argparse.Namespace) -> Iterator[R
             return iter([RenderJob(nifti_file=args.nifti_file, output_dir=args.output_dir)])
         case _Command.RENDER_DIRECTORY:
             return directory_jobs(args.input_dir, args.output_dir)
+        case _Command.COMPOSE:
+            raise ValueError("compose does not render NIfTI files")
 
 
 def _parcellation_colors(args: argparse.Namespace) -> CategoricalColors | None:
@@ -274,6 +403,9 @@ def _run_render_command(args: argparse.Namespace, jobs: Iterable[RenderJob]) -> 
         intensity_min=args.intensity_min,
         intensity_max=args.intensity_max,
         parcellation=_parcellation_colors(args),
+        font_path=args.font_path,
+        title=args.title,
+        show_title=not args.no_title,
     )
     for job in jobs:
         paths = render_file(
@@ -287,13 +419,39 @@ def _run_render_command(args: argparse.Namespace, jobs: Iterable[RenderJob]) -> 
             print(path)
 
 
+def _run_compose_command(args: argparse.Namespace) -> None:
+    entries = args.panels or []
+    if not entries:
+        raise ValueError("compose requires at least one --panel or --images entry")
+    columns = args.columns
+    if args.rows is not None:
+        rows = [plane for planes in args.rows for plane in planes]
+        panels = panels_from_directories(entries, rows, frames=args.frames)
+        width = len(panels) // len(rows)
+        if columns is not None and columns != width:
+            raise ValueError(f"--columns {columns} would break the rows; --rows gives {width} columns per row")
+        columns = width
+    else:
+        if args.frames is not None:
+            raise ValueError("--frames requires --rows")
+        panels = [Panel(path, label) for label, path in entries]
+    print(compose_files(
+        panels, args.output, columns=columns, title=args.title, spacing=tuple(args.spacing),
+        font_path=args.font_path, font_size=args.font_size,
+        background_color=args.background_color, text_color=args.text_color,
+    ))
+
+
 def cli(argv: Optional[List[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     command = _Command(args.command)
     try:
-        _validate_render_options(args)
-        _run_render_command(args, _jobs_for_command(command, args))
+        if command is _Command.COMPOSE:
+            _run_compose_command(args)
+        else:
+            _validate_render_options(args)
+            _run_render_command(args, _jobs_for_command(command, args))
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

@@ -12,12 +12,14 @@ from numpy.typing import NDArray
 from mrplot.categorical import CategoricalColors, LabelColors
 from mrplot.media import write_mp4_frames, write_png
 from mrplot.overlays import ImageOverlay, LabelOverlay, PreparedOverlay, prepare_overlay
-from mrplot.paths import nifti_basename
+from mrplot.paths import frame_output_path, nifti_basename, plane_output_stem
 from mrplot.rendering import (
+    DEFAULT_TITLE,
     FrameLayout,
     RenderConfig,
     RenderResources,
     load_render_resources,
+    format_title,
     render_prepared_frame,
     resolve_intensity_window,
 )
@@ -31,6 +33,33 @@ class PreparedPlane(NamedTuple):
     layout: FrameLayout
     title: str
     crosshair: tuple[int, int] | None
+
+
+def layer_label(layer: ImageOverlay | LabelOverlay) -> str:
+    """Describe a drawn layer by file name and kind, e.g. ``seg (outline)``."""
+    if isinstance(layer, ImageOverlay):
+        kind = "overlay"
+    else:
+        kind = "outline" if layer.line_opacity else "mask"
+    return f"{nifti_basename(layer.path)} ({kind})"
+
+
+def describe_layers(base_name: str, layer_labels: Sequence[str] = ()) -> str:
+    """Join the base name and layer labels in drawing order."""
+    return " + ".join((base_name, *layer_labels))
+
+
+def plane_title(
+    config: RenderConfig, plane: Plane, *, base_name: str, layer_labels: Sequence[str] = (),
+) -> str:
+    """Return the title for one plane, or an empty string when titles are off."""
+    if not config.show_title:
+        return ""
+    return format_title(
+        DEFAULT_TITLE if config.title is None else config.title,
+        name=base_name, layers=describe_layers(base_name, layer_labels),
+        plane=plane.value.capitalize(),
+    )
 
 
 def _validate_plot_inputs(triplet: SliceTriplet, config: RenderConfig) -> tuple[float, float]:
@@ -55,6 +84,7 @@ def _prepare_plot(
     resources: RenderResources,
     intensity_bounds: tuple[float, float],
     label_colors: LabelColors | None,
+    layer_labels: Sequence[str] = (),
 ) -> tuple[PreparedPlane, ...]:
     """Build the per-plane layouts after validating the plot inputs."""
     planes = (
@@ -74,7 +104,9 @@ def _prepare_plot(
                 resources=resources,
                 label_colors=label_colors,
             ),
-            title=f"{base_name} {plane.value.capitalize()} Slice",
+            title=plane_title(
+                resources.config, plane, base_name=base_name, layer_labels=layer_labels,
+            ),
             crosshair=crosshair if resources.config.crosshairs else None,
         )
         for plane, array, spacing, crosshair in planes
@@ -103,32 +135,32 @@ def _plot_slices(
     config: RenderConfig,
     label_colors: LabelColors | None = None,
     overlays: Sequence[PreparedOverlay] = (),
+    layer_labels: Sequence[str] = (),
 ) -> list[str]:
     bounds = _validate_plot_inputs(triplet, config)
     if label_colors is None and config.parcellation is not None:
         label_colors = config.parcellation.resolve(triplet.sagittal, triplet.coronal, triplet.axial)
     planes = _prepare_plot(
         triplet, base_name=base_name, resources=load_render_resources(config),
-        intensity_bounds=bounds, label_colors=label_colors,
+        intensity_bounds=bounds, label_colors=label_colors, layer_labels=layer_labels,
     )
     is_time_series = triplet.axial.ndim == 3
     as_video = is_time_series and not config.frames_as_png
     suffix = "mp4" if as_video else "png"
     n_frames = triplet.axial.shape[-1] if is_time_series else 1
-    index_width = max(4, len(str(n_frames - 1)))
     written = []
     for prepared in planes:
         layer_frames = [layer.frames_for(prepared.plane, prepared.layout.output_size) for layer in overlays]
         frames = (
             render_prepared_frame(
                 prepared.array[..., t], prepared.layout,
-                f"{prepared.title}, Timepoint {t}" if is_time_series else prepared.title,
+                f"{prepared.title}, Timepoint {t}" if is_time_series and prepared.title else prepared.title,
                 crosshair=prepared.crosshair,
                 overlays=[next(layer) for layer in layer_frames],
             )
             for t in range(prepared.array.shape[-1])
         )
-        stem = os.path.join(output_dir, f"{base_name}_{prepared.plane.value}")
+        stem = plane_output_stem(output_dir, base_name, prepared.plane)
         if as_video:
             written.append(
                 write_mp4_frames(
@@ -137,7 +169,7 @@ def _plot_slices(
             )
         elif is_time_series:
             written.extend(
-                write_png(f"{stem}_vol-{t:0{index_width}d}.png", frame) for t, frame in enumerate(frames)
+                write_png(frame_output_path(stem, t, n_frames), frame) for t, frame in enumerate(frames)
             )
         else:
             written.append(write_png(f"{stem}.png", next(frames)))
@@ -154,7 +186,11 @@ def render_file(
     outline_colors: CategoricalColors | None = None,
     overlays: Sequence[ImageOverlay | LabelOverlay] = (),
 ) -> list[str]:
-    """Write orthogonal views, drawing aligned overlay layers in the given order."""
+    """Write orthogonal views, drawing aligned overlay layers in the given order.
+
+    Each plane is titled with the base name and its layers, unless ``config.title``
+    or ``config.show_title`` say otherwise.
+    """
     if outline_path is None and outline_colors is not None:
         raise ValueError("Outline colours require an outline image.")
     image = load_render_volume(nifti_file)
@@ -174,4 +210,5 @@ def render_file(
     return _plot_slices(
         triplet, base_name=nifti_basename(nifti_file), output_dir=output_dir, config=config,
         label_colors=label_colors, overlays=prepared_layers,
+        layer_labels=[layer_label(layer) for layer in layers],
     )

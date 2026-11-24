@@ -206,17 +206,17 @@ def test_render_accepts_crosshairs_and_colorbar_flags(sample_3d_nifti, tmp_path)
     assert (output_dir / f"{base}_axial.png").exists()
 
 
-def test_font_size_defaults_to_20_and_can_be_changed(sample_3d_nifti, tmp_path):
+def test_font_size_defaults_to_40_and_can_be_changed(sample_3d_nifti, tmp_path):
     import numpy as np
     from PIL import Image
 
-    assert _build_parser().parse_args(["render", "scan.nii", "--output-dir", "out"]).font_size == 20
+    assert _build_parser().parse_args(["render", "scan.nii", "--output-dir", "out"]).font_size == 40
 
     default_dir, larger_dir = tmp_path / "default", tmp_path / "larger"
     cli(["render", str(sample_3d_nifti), "--output-dir", str(default_dir)])
     cli(
         [
-            "render", str(sample_3d_nifti), "--font-size", "32",
+            "render", str(sample_3d_nifti), "--font-size", "56",
             "--output-dir", str(larger_dir),
         ]
     )

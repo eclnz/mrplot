@@ -150,7 +150,8 @@ def test_outline_respects_grid_and_mask_slice_selection(tmp_path):
     outline = tmp_path / "reoriented.nii.gz"
     nib.save(reoriented, outline)
 
-    config = RenderConfig(max_fig_size=96, slicing=SliceConfig(crop=True, padding=1))
+    # Titles name the outline file, which differs between the two renders.
+    config = RenderConfig(max_fig_size=96, slicing=SliceConfig(crop=True, padding=1), show_title=False)
     args = dict(mask_path=mask, config=config, outline_colors=CategoricalColors(colors=["#FF8800"]))
     reference = render_file(path, tmp_path / "reference", outline_path=mask, **args)
     actual = render_file(path, tmp_path / "aligned", outline_path=outline, **args)
@@ -168,7 +169,8 @@ def test_crop_inside_single_parcel_does_not_draw_a_frame(tmp_path):
     anatomy = save_phantom(tmp_path, "base", np.ones_like(labels))
     outline = save_phantom(tmp_path, "parcels", labels)
     mask = save_phantom(tmp_path, "crop", crop)
-    config = RenderConfig(max_fig_size=96, slicing=SliceConfig(crop=True, padding=0))
+    # Titles name the outline, so only the plain and outlined slices are compared.
+    config = RenderConfig(max_fig_size=96, slicing=SliceConfig(crop=True, padding=0), show_title=False)
 
     plain = render_file(anatomy, tmp_path / "plain", config=config, mask_path=mask)
     outlined = render_file(anatomy, tmp_path / "outlined", config=config, mask_path=mask, outline_path=outline)
